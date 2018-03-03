@@ -121,7 +121,6 @@ int simplify_goto_chain(CODE **c) {
  * goto L1
  * ...
  * L1:
- * (Some other labels)
  * ifeq L2
  * ...
  * L2:
@@ -129,7 +128,6 @@ int simplify_goto_chain(CODE **c) {
  * goto L2
  * ...
  * L1: (reference count reduced by 1)
- * (Some other labels)
  * ifeq L2
  * ...
  * L2: (reference count increased by 1)
@@ -137,19 +135,12 @@ int simplify_goto_chain(CODE **c) {
 int simplify_iconst_0_goto_ifeq(CODE **c) {
   int v;
   int l1, l2;
-  int dummy;
-  CODE *p;
   if (is_ldc_int(*c,&v) && v==0 &&
-      is_goto(next(*c),&l1)) {
-    p = destination(l1);
-    while(p!=NULL && is_label(p, &dummy)) {
-      p = next(p);
-    }
-    if (is_ifeq(p,&l2)) {
-     droplabel(l1);
-     copylabel(l2);
-     return replace(c,2,makeCODEgoto(l2,NULL));
-    }
+      is_goto(next(*c),&l1) &&
+      is_ifeq(next(destination(l1)),&l2) ) {
+    droplabel(l1);
+    copylabel(l2);
+    return replace(c,2,makeCODEgoto(l2,NULL));
   }
   return 0;
 }
@@ -160,7 +151,6 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
  * pop
  * ...
  * L1:
- * (Some other labels)
  * ifeq L2
  * ...
  * L2:
@@ -168,25 +158,19 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
  * ifeq L2
  * ...
  * L1: (reference count reduced by 1)
- * (Some other labels)
  * ifeq L2
  * ...
  * L2: (reference count increased by 1)
  */
 int simplify_dup_ifeq_ifeq(CODE **c) {
   int l1, l2;
-  int dummy;
-  CODE *p;
-  if (is_dup(*c) && is_ifeq(next(*c),&l1) && is_pop(next(next(*c)))) {
-    p = destination(l1);
-    while(p!=NULL && is_label(p, &dummy)) {
-      p = next(p);
-    }
-    if (is_ifeq(p,&l2)) {
-     droplabel(l1);
-     copylabel(l2);
-     return replace(c,2,makeCODEifeq(l2,NULL));
-    }
+  if (is_dup(*c) &&
+      is_ifeq(next(*c),&l1) &&
+      is_pop(next(next(*c))) &&
+      is_ifeq(next(destination(l1)),&l2) ) {
+    droplabel(l1);
+    copylabel(l2);
+    return replace(c,3,makeCODEifeq(l2,NULL));
   }
   return 0;
 }
@@ -196,6 +180,81 @@ int remove_dead_label(CODE **c) {
   int l;
   if (is_label(*c, &l) && deadlabel(l)) {
     return replace(c, 1, NULL);
+  }
+  return 0;
+}
+
+
+int set_label(CODE *c, int l) {
+  switch (c->kind) {
+
+    case gotoCK:
+      c->val.gotoC = l;
+
+    case ifeqCK:
+      c->val.ifeqC = l;
+      break;
+    case ifneCK:
+      c->val.ifneC = l;
+      break;
+    case if_acmpeqCK:
+      c->val.if_acmpeqC = l;
+      break;
+    case if_acmpneCK:
+      c->val.if_acmpneC = l;
+      break;
+    case ifnullCK:
+      c->val.ifnullC = l;
+      break;
+    case ifnonnullCK:
+      c->val.ifnonnullC = l;
+      break;
+
+    case if_icmpeqCK:
+      c->val.if_icmpeqC = l;
+      break;
+    case if_icmpneCK:
+      c->val.if_icmpneC = l;
+      break;
+    case if_icmpgtCK:
+      c->val.if_icmpgtC = l;
+      break;
+    case if_icmpltCK:
+      c->val.if_icmpltC = l;
+      break;
+    case if_icmpgeCK:
+      c->val.if_icmpgeC = l;
+      break;
+    case if_icmpleCK:
+      c->val.if_icmpleC = l;
+      break;
+
+    default:
+      return 0;
+      break;
+  }
+  return 1;
+}
+
+
+/* goto/cmp L1
+ * ...
+ * L1:
+ * L2:
+ * --------->
+ * goto/cmp L2
+ * ...
+ * L1: (reference count reduced by 1)
+ * L2: (reference count increased by 1)
+ */
+int fuse_labels(CODE **c) {
+  int l1, l2;
+  if (uses_label(*c, &l1) && is_label(next(destination(l1)), &l2)) {
+    droplabel(l1);
+    copylabel(l2);
+    
+    set_label(*c, l2);
+    return 1;
   }
   return 0;
 }
@@ -249,6 +308,37 @@ int simplify_dup_xxx_pop(CODE **c) {
   }
   return 0;
 }
+
+
+/* dup
+ * aload k (usually 0)
+ * swap
+ * putfield
+ * pop
+ * --------->
+ * aload k
+ * swap
+ * putfield
+ *
+ * I believe this pattern occurs when storing to a member variable of the
+ * current class
+ */
+
+int simplify_member_store(CODE **c) {
+  int k;
+  char *putfield_arg;
+  if (is_dup(*c) &&
+      is_aload(next(*c), &k) &&
+      is_swap(next(next(*c))) &&
+      is_putfield(next(next(next(*c))), &putfield_arg) &&
+      is_pop(next(next(next(next(*c))))) ) {
+    return 
+      replace(c, 5,
+      makeCODEaload(k, makeCODEswap( makeCODEputfield(putfield_arg, NULL))));
+  }
+  return 0;
+}
+
 
 
 /*
@@ -442,6 +532,7 @@ void init_patterns(void) {
   ADD_PATTERN(goto_return);
   ADD_PATTERN(invert_comparison);
 	ADD_PATTERN(simplify_dup_xxx_pop);
+	ADD_PATTERN(simplify_member_store);
 	ADD_PATTERN(simplify_astore_aload);
 	ADD_PATTERN(simplify_multiplication_right);
 	ADD_PATTERN(positive_increment);
@@ -450,6 +541,7 @@ void init_patterns(void) {
 	ADD_PATTERN(simplify_goto_goto);
   ADD_PATTERN(remove_iconst_ifeq);
 	ADD_PATTERN(remove_dead_label);
+	ADD_PATTERN(fuse_labels);
 	ADD_PATTERN(remove_instruction_after_goto);
 	ADD_PATTERN(remove_instruction_after_return);
 }
