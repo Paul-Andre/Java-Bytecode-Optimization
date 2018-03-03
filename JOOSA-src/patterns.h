@@ -121,6 +121,7 @@ int simplify_goto_chain(CODE **c) {
  * goto L1
  * ...
  * L1:
+ * (Some other labels)
  * ifeq L2
  * ...
  * L2:
@@ -128,6 +129,7 @@ int simplify_goto_chain(CODE **c) {
  * goto L2
  * ...
  * L1: (reference count reduced by 1)
+ * (Some other labels)
  * ifeq L2
  * ...
  * L2: (reference count increased by 1)
@@ -135,12 +137,56 @@ int simplify_goto_chain(CODE **c) {
 int simplify_iconst_0_goto_ifeq(CODE **c) {
   int v;
   int l1, l2;
+  int dummy;
+  CODE *p;
   if (is_ldc_int(*c,&v) && v==0 &&
-      is_goto(next(*c),&l1) &&
-      is_ifeq(next(destination(l1)),&l2)) {
+      is_goto(next(*c),&l1)) {
+    p = destination(l1);
+    while(p!=NULL && is_label(p, &dummy)) {
+      p = next(p);
+    }
+    if (is_ifeq(p,&l2)) {
      droplabel(l1);
      copylabel(l2);
      return replace(c,2,makeCODEgoto(l2,NULL));
+    }
+  }
+  return 0;
+}
+
+/*
+ * dup
+ * ifeq L1
+ * pop
+ * ...
+ * L1:
+ * (Some other labels)
+ * ifeq L2
+ * ...
+ * L2:
+ * --------->
+ * ifeq L2
+ * ...
+ * L1: (reference count reduced by 1)
+ * (Some other labels)
+ * ifeq L2
+ * ...
+ * L2: (reference count increased by 1)
+ */
+int simplify_dup_ifeq_ifeq(CODE **c) {
+  int l1, l2;
+  int dummy;
+  CODE *p;
+  if (is_dup(*c) && is_ifeq(next(*c),&l1) && is_pop(next(next(*c)))) {
+    p = destination(l1);
+    while(p!=NULL && is_label(p, &dummy)) {
+      p = next(p);
+    }
+    if (is_ifeq(p,&l2)) {
+     droplabel(l1);
+     copylabel(l2);
+     return replace(c,2,makeCODEifeq(l2,NULL));
+    }
   }
   return 0;
 }
@@ -400,6 +446,7 @@ void init_patterns(void) {
 	ADD_PATTERN(simplify_multiplication_right);
 	ADD_PATTERN(positive_increment);
   ADD_PATTERN(simplify_iconst_0_goto_ifeq);
+  ADD_PATTERN(simplify_dup_ifeq_ifeq);
 	ADD_PATTERN(simplify_goto_goto);
   ADD_PATTERN(remove_iconst_ifeq);
 	ADD_PATTERN(remove_dead_label);
