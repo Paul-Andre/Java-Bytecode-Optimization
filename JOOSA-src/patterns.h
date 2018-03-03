@@ -10,6 +10,7 @@
  * email: hendren@cs.mcgill.ca, mis@brics.dk
  */
 
+
 /* iload x        iload x        iload x
  * ldc 0          ldc 1          ldc 2
  * imul           imul           imul
@@ -92,9 +93,268 @@ int simplify_goto_goto(CODE **c)
   }
   return 0;
 }
+
+
+/* Simplifies a chain of gotos, detecting loops.
+ */
+/*
+int simplify_goto_chain(CODE **c) {
+  int label;
+  if (is_goto(*c, &label)) {
+    int previously_seen[16];
+    int index = 0;
+    int current = &label;
+    previously_seen[index] = current;
+    index ++;
+    while (true) {
+      int next_label;
+      if (is_goto(next(destination(current)), &next_label)) {
+      }
+      }
+      }
+      }
+      */
+
+
+/*
+ * iconst_0
+ * goto L1
+ * ...
+ * L1:
+ * ifeq L2
+ * ...
+ * L2:
+ * --------->
+ * goto L2
+ * ...
+ * L1: (reference count reduced by 1)
+ * ifeq L2
+ * ...
+ * L2: (reference count increased by 1)
+ */
+int simplify_iconst_0_goto_ifeq(CODE **c) {
+  int v;
+  int l1, l2;
+  if (is_ldc_int(*c,&v) && v==0 &&
+      is_goto(next(*c),&l1) &&
+      is_ifeq(next(destination(l1)),&l2)) {
+     droplabel(l1);
+     copylabel(l2);
+     return replace(c,2,makeCODEgoto(l2,NULL));
+  }
+  return 0;
+}
+
+
+int remove_dead_label(CODE **c) {
+  int l;
+  if (is_label(*c, &l) && deadlabel(l)) {
+    return replace(c, 1, NULL);
+  }
+  return 0;
+}
+
+
+
+/*
+ * ldc [not 0]
+ * ifeq L
+ * ...
+ * L:
+ * --------->
+ * [nothing]
+ * ...
+ * L: (reference counter reduced by 1)
+ */
+
+int remove_iconst_ifeq(CODE **c) {
+  int v;
+  int l;
+  if (is_ldc_int(*c, &v) && v!=0 &&
+      is_ifeq(next(*c),&l)) {
+    droplabel(l);
+    return replace(c, 2, NULL);
+  }
+  return 0;
+}
+
+
+
+/*
+ * dup
+ * xxx [any instruction that only uses the top value and removes it]
+ * pop
+ * --------->
+ * xxx
+ */
+
+int simplify_dup_xxx_pop(CODE **c) {
+  if (is_dup(*c)) {
+    int inc, affected, used;
+    int code_type = stack_effect(next(*c), &inc, &affected, &used);
+    if (used == -1 && inc == -1 &&
+        code_type == 0 /* normal, ie not jump/conditional/label/break*/ ) {
+      if (is_pop(next(next(*c)))) {
+        next(*c)->next = next(next(next(*c)));
+        *c = next(*c);
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
+
+/*
+ * dup
+ * pop
+ * --------->
+ * [nothing]
+ */
+int remove_dup_pop(CODE **c) {
+  if (is_dup(*c) && is_pop(next(*c))) {
+    return replace(c, 2, NULL);
+  }
+  return 0;
+}
+
+/*
+ * astore k
+ * aload k
+ * --------->
+ * dup
+ * astore k
+ */
+
+int simplify_astore_aload(CODE **c) {
+  int a, b;
+  if (is_astore(*c, &a) && is_aload(next(*c), &b) && a == b) {
+    return replace(c, 2, makeCODEdup(makeCODEastore(a, NULL)));
+  }
+  return 0;
+}
+
+
+/*
+ * if_comparison L1
+ * goto L2
+ * L1:
+ * ..
+ * L2:
+ * --------->
+ * if_not_comparison L2
+ * L1: (reference counter reduced by 1)
+ *
+ * L2: (reference counter stays the same)
+ */
+int invert_comparison(CODE **c) {
+  int l1;
+  int l2, l3;
+  if (*c == NULL) return 0;
+  switch ((*c)->kind) {
+    case ifeqCK:
+      l1 = (*c)->val.ifeqC;
+      break;
+    case ifneCK:
+      l1 = (*c)->val.ifneC;
+      break;
+    case if_acmpeqCK:
+      l1 = (*c)->val.if_acmpeqC;
+      break;
+    case if_acmpneCK:
+      l1 = (*c)->val.if_acmpneC;
+      break;
+    case ifnullCK:
+      l1 = (*c)->val.ifnullC;
+      break;
+    case ifnonnullCK:
+      l1 = (*c)->val.ifnonnullC;
+      break;
+
+    case if_icmpeqCK:
+      l1 = (*c)->val.if_icmpeqC;
+      break;
+    case if_icmpneCK:
+      l1 = (*c)->val.if_icmpneC;
+      break;
+    case if_icmpgtCK:
+      l1 = (*c)->val.if_icmpgtC;
+      break;
+    case if_icmpltCK:
+      l1 = (*c)->val.if_icmpltC;
+      break;
+    case if_icmpgeCK:
+      l1 = (*c)->val.if_icmpgeC;
+      break;
+    case if_icmpleCK:
+      l1 = (*c)->val.if_icmpleC;
+      break;
+
+    default:
+      return 0;
+      break;
+  }
+
+  if (is_goto(next(*c), &l2) && is_label(next(next(*c)), &l3) && l1==l3) {
+    CODE *new_code;
+
+    droplabel(l1);
+
+    switch ((*c)->kind) {
+      case ifeqCK:
+        new_code = makeCODEifne(l2,NULL);
+        break;
+      case ifneCK:
+        new_code = makeCODEifeq(l2,NULL);
+        break;
+      case if_acmpeqCK:
+        new_code = makeCODEif_acmpne(l2,NULL);
+        break;
+      case if_acmpneCK:
+        new_code = makeCODEif_acmpeq(l2,NULL);
+        break;
+      case ifnullCK:
+        new_code = makeCODEifnonnull(l2,NULL);
+        break;
+      case ifnonnullCK:
+        new_code = makeCODEifnull(l2,NULL);
+        break;
+
+      case if_icmpeqCK:
+        new_code = makeCODEif_icmpne(l2,NULL);
+        break;
+      case if_icmpneCK:
+        new_code = makeCODEif_icmpeq(l2,NULL);
+        break;
+      case if_icmpgtCK:
+        new_code = makeCODEif_icmple(l2,NULL);
+        break;
+      case if_icmpltCK:
+        new_code = makeCODEif_icmpge(l2,NULL);
+        break;
+      case if_icmpgeCK:
+        new_code = makeCODEif_icmplt(l2,NULL);
+        break;
+      case if_icmpleCK:
+        new_code = makeCODEif_icmpgt(l2,NULL);
+        break;
+      default:
+        printf("This shouldn't happen. (*c)->kind mysteriously changed.\n");
+        return 0;
+    }
+    return replace(c, 2, new_code);
+  }
+  return 0;
+}
+
 void init_patterns(void) {
+	ADD_PATTERN(simplify_dup_xxx_pop);
+	ADD_PATTERN(simplify_astore_aload);
 	ADD_PATTERN(simplify_multiplication_right);
-	ADD_PATTERN(simplify_astore);
 	ADD_PATTERN(positive_increment);
+  ADD_PATTERN(simplify_iconst_0_goto_ifeq);
 	ADD_PATTERN(simplify_goto_goto);
+	ADD_PATTERN(remove_dead_label);
+  ADD_PATTERN(remove_iconst_ifeq);
+  ADD_PATTERN(invert_comparison);
 }
