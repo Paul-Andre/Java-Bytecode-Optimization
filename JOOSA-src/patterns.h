@@ -379,7 +379,20 @@ int remove_instruction_after_return(CODE **c) {
   return 0;
 }
 
+int constant_fold(CODE **c) {
+  int a, b;
+  if (is_ldc_int(*c, &a) && is_ldc_int(next(*c), &b)) {
+    if (is_iadd(next(next(*c)))) {
+      return replace(c, 3, makeCODEldc_int(a+b, NULL));
+    } else if (is_imul(next(next(*c)))) {
+      return replace(c, 3, makeCODEldc_int(a*b, NULL));
+    }
+  }
+  return 0;
+}
+
 void init_patterns(void) {
+  /*ADD_PATTERN(constant_fold);*/
   ADD_PATTERN(goto_return);
   ADD_PATTERN(invert_comparison);
 	ADD_PATTERN(simplify_dup_xxx_pop);
@@ -387,7 +400,7 @@ void init_patterns(void) {
 	ADD_PATTERN(simplify_multiplication_right);
 	ADD_PATTERN(positive_increment);
   ADD_PATTERN(simplify_iconst_0_goto_ifeq);
-	/*ADD_PATTERN(simplify_goto_goto);*/
+	ADD_PATTERN(simplify_goto_goto);
   ADD_PATTERN(remove_iconst_ifeq);
 	ADD_PATTERN(remove_dead_label);
 	ADD_PATTERN(remove_instruction_after_goto);
