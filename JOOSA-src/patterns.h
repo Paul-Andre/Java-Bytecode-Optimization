@@ -347,14 +347,49 @@ int invert_comparison(CODE **c) {
   return 0;
 }
 
+
+int goto_return(CODE **c) {
+  int l1;
+  if(is_goto(*c, &l1) && is_return(next(destination(l1)))) {
+    droplabel(l1);
+    return replace(c, 1, makeCODEreturn(NULL));
+  }
+  return 0;
+}
+
+int remove_instruction_after_goto(CODE **c) {
+  int l;
+  int dummy;
+  if (is_goto(*c, &l) && next(*c) != NULL &&
+      /*!is_nop(next(*c)) &&*/
+      !is_label(next(*c), &dummy)) {
+    return replace_modified(&((*c)->next), 1, NULL);
+  }
+  return 0;
+}
+
+int remove_instruction_after_return(CODE **c) {
+  int dummy;
+  if ((is_areturn(*c) || is_ireturn(*c) || is_return(*c)) &&
+      next(*c) != NULL &&
+      /*!is_nop(next(*c)) &&*/
+      !is_label(next(*c), &dummy)) {
+    return replace_modified(&((*c)->next), 1, NULL);
+  }
+  return 0;
+}
+
 void init_patterns(void) {
+  ADD_PATTERN(goto_return);
+  ADD_PATTERN(invert_comparison);
 	ADD_PATTERN(simplify_dup_xxx_pop);
 	ADD_PATTERN(simplify_astore_aload);
 	ADD_PATTERN(simplify_multiplication_right);
 	ADD_PATTERN(positive_increment);
   ADD_PATTERN(simplify_iconst_0_goto_ifeq);
-	ADD_PATTERN(simplify_goto_goto);
-	ADD_PATTERN(remove_dead_label);
+	/*ADD_PATTERN(simplify_goto_goto);*/
   ADD_PATTERN(remove_iconst_ifeq);
-  ADD_PATTERN(invert_comparison);
+	ADD_PATTERN(remove_dead_label);
+	ADD_PATTERN(remove_instruction_after_goto);
+	ADD_PATTERN(remove_instruction_after_return);
 }
