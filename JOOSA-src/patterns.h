@@ -51,6 +51,20 @@ int simplify_astore(CODE **c)
   return 0;
 }
 
+/* dup
+ * pop
+ * -------->
+ * [nothing]
+ */
+int dup_pop(CODE **c)
+{
+  if (is_dup(*c) &&
+      is_pop(next(*c))) {
+     return replace(c,2,NULL);
+  }
+  return 0;
+}
+
 /* iload x
  * ldc k   (0<=k<=127)
  * iadd
@@ -370,6 +384,22 @@ int simplify_astore_aload(CODE **c) {
   return 0;
 }
 
+/*
+ * istore k
+ * iload k
+ * --------->
+ * dup
+ * istore k
+ */
+
+int simplify_istore_iload(CODE **c) {
+  int a, b;
+  if (is_istore(*c, &a) && is_iload(next(*c), &b) && a == b) {
+    return replace(c, 2, makeCODEdup(makeCODEistore(a, NULL)));
+  }
+  return 0;
+}
+
 
 /*
  * if_comparison L1
@@ -595,6 +625,97 @@ int unswap(CODE **c) {
   return 0;
 }
 
+#define N_LOOKAHEAD 32
+
+/* Navigates the code to check that the variable is not loaded
+ *
+ * return 1 = no loads
+ * return 0 = cannot say that there's no loads
+ */
+int check_no_loads(CODE *c, int k, int *count) {
+  int var;
+  int l;
+  (*count)--;
+  if (*count == 0) return 0;
+  if ((is_iload(c, &var)||is_aload(c,&var)) && var == k) return 0;
+
+  if (c == NULL) return 1;
+  if (is_return(c) || is_ireturn(c) || is_areturn(c)) return 1;
+  if ((is_istore(c, &var) || is_astore(c,&var)) && var == k) return 1; /* we ignore old value */
+
+  if (is_goto(c, &l)) return check_no_loads(destination(l), k, count);
+
+  if (uses_label(c, &l)) { /* is comparison */
+    return check_no_loads(next(c), k, count) &&
+      check_no_loads(destination(l), k, count);
+  }
+  return check_no_loads(next(c), k, count);
+}
+
+/* 
+ * If the current operation is a store, it searches through a fixed set of
+ * paths to see if it is ever loaded. If all the branches terminate or have the
+ * variable stored again, then we know the current load will never be used.
+ */
+int remove_dead_store(CODE **c) {
+  int k;
+  int instruction_count = N_LOOKAHEAD;
+  if ((is_istore(*c, &k) || is_astore(*c, &k))
+      && check_no_loads(next(*c), k, &instruction_count)) {
+    return replace(c, 1, makeCODEpop(NULL));
+  }
+  return 0;
+}
+
+/* ldc "asdfasdf"
+ * dup
+ * ifnonnull L1
+ * ---------->
+ * ldc "asdfasdf"
+ * goto L1
+ */
+
+int simplify_ldc_string_ifnonnull(CODE **c) {
+  char *s;
+  int l;
+  if (is_ldc_string(*c, &s) && is_dup(next(*c)) && is_ifnonnull(next(next(*c)), &l)){
+    return replace(c, 3, makeCODEldc_string(s, makeCODEgoto(l, NULL)));
+  }
+  return 0;
+}
+
+/* invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;
+ * dup
+ * ifnonnull L1
+ * ---------->
+ * invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;
+ * goto L1
+ */
+
+int simplify_concat_string_ifnonnull(CODE **c) {
+  char *s;
+  int l;
+  if (is_invokevirtual(*c, &s) &&
+      strcmp(s,"java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;")==0 &&
+      is_dup(next(*c)) &&
+      is_ifnonnull(next(next(*c)), &l)){
+    return replace(&((*c)->next), 2, makeCODEgoto(l, NULL));
+  }
+  return 0;
+}
+
+/* goto L1
+ * L1:
+ * ---------->
+ * L1: (reference count reduced by 1)
+ */
+int remove_unnecessary_goto(CODE **c) {
+  int l1, l2;
+  if (is_goto(*c, &l1) && is_label(next(*c), &l2) && l1 == l2) {
+    return replace_modified(c, 1, NULL);
+  }
+  return 0;
+}
 
 
 void init_patterns(void) {
@@ -604,6 +725,7 @@ void init_patterns(void) {
 	ADD_PATTERN(simplify_dup_xxx_pop);
 	ADD_PATTERN(simplify_member_store);
 	ADD_PATTERN(simplify_astore_aload);
+	ADD_PATTERN(simplify_istore_iload);
 	ADD_PATTERN(simplify_multiplication_right);
 	ADD_PATTERN(positive_increment);
   ADD_PATTERN(simplify_iconst_0_goto_ifeq);
@@ -617,4 +739,9 @@ void init_patterns(void) {
 	ADD_PATTERN(simplify_icmp_0);
 	ADD_PATTERN(simplify_acmp_null);
 	ADD_PATTERN(unswap);
+	ADD_PATTERN(remove_dead_store);
+	ADD_PATTERN(dup_pop);
+  ADD_PATTERN(simplify_ldc_string_ifnonnull);
+  ADD_PATTERN(remove_unnecessary_goto);
+  ADD_PATTERN(simplify_concat_string_ifnonnull);
 }
