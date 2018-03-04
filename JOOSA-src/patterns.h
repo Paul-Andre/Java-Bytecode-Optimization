@@ -527,6 +527,76 @@ int constant_fold(CODE **c) {
   return 0;
 }
 
+/* iconst_0
+ * if_icmpeq/if_icmpne L1
+ * ---------->
+ * ifeq/ifne L1
+ */
+int simplify_icmp_0(CODE **c) {
+  int v;
+  int l;
+  if (is_ldc_int(*c, &v) && v == 0) {
+    if (is_if_icmpeq(next(*c), &l)) {
+      return replace(c, 2, makeCODEifeq(l, NULL));
+    } else if (is_if_icmpne(next(*c), &l)) {
+      return replace(c, 2, makeCODEifne(l, NULL));
+    }
+  }
+  return 0;
+}
+
+/* aconst_null
+ * if_acmpeq/if_acmpne L1
+ * ---------->
+ * ifnull/ifnonnull L1
+ */
+int simplify_acmp_null(CODE **c) {
+  int l;
+  if (is_aconst_null(*c)) {
+    if (is_if_acmpeq(next(*c), &l)) {
+      return replace(c, 2, makeCODEifnull(l, NULL));
+    } else if (is_if_acmpne(next(*c), &l)) {
+      return replace(c, 2, makeCODEifnonnull(l, NULL));
+    }
+  }
+  return 0;
+}
+
+
+
+/* ldc/load #1
+ * ldc/load #2
+ * swp
+ * ---------->
+ * #2
+ * #1
+ * swp
+ */
+int unswap(CODE **c) {
+  int d; /* dummy */
+  CODE *c1;
+  CODE *c2;
+  CODE *swap;
+  if ((is_ldc_int(*c, &d) || is_aload(*c, &d) ||
+        is_iload(*c, &d) || is_aconst_null(*c)
+        ) &&
+      (is_ldc_int(next(*c), &d) || is_aload(next(*c), &d) ||
+       is_iload(next(*c), &d) || is_aconst_null(*c)
+       ) &&
+      is_swap(next(next(*c)))) {
+    c1 = *c;
+    c2 = next(c1);
+    swap = next(c2);
+    *c = c2;
+    c2->next = c1;
+    c1->next = swap->next;
+    return 1;
+  }
+  return 0;
+}
+
+
+
 void init_patterns(void) {
   /*ADD_PATTERN(constant_fold);*/
   ADD_PATTERN(goto_return);
@@ -544,4 +614,7 @@ void init_patterns(void) {
 	ADD_PATTERN(fuse_labels);
 	ADD_PATTERN(remove_instruction_after_goto);
 	ADD_PATTERN(remove_instruction_after_return);
+	ADD_PATTERN(simplify_icmp_0);
+	ADD_PATTERN(simplify_acmp_null);
+	ADD_PATTERN(unswap);
 }
