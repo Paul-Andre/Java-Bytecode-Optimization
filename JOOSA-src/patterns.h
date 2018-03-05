@@ -253,6 +253,88 @@ int simplify_dup_ifeq_ifne(CODE **c) {
 }
 
 
+int is_boolcmp(CODE *c, int *v, int *l) {
+  if (is_ifeq(c, l)) {
+    *v = 0;
+    return 1;
+  } else if (is_ifne(c, l)) {
+    *v = 1;
+    return 1;
+  }
+  return 0;
+}
+
+CODE *makeCODEboolcmp(int v, int l, CODE *next) {
+  if (v == 0) {
+    return makeCODEifeq(l, next);
+  }
+  if (v == 1) {
+    return makeCODEifne(l, next);
+  }
+  return NULL;
+}
+
+
+/* iconst_0/1
+ * goto L1
+ * ...
+ * L1:
+ * ifeq/ifne L2
+ * ...
+ * L2
+ * ---------->
+ * goto L2
+ * ...
+ * L1: (reference count reduced by 1)
+ * ifeq/ifne L2
+ * ...
+ * L2: (reference count increased by 1)
+ *
+ * ==========================================
+ *
+ * iconst_0/1
+ * goto L1
+ * ...
+ * L1:
+ * ifne/ifeq L2
+ * ...
+ * L2:
+ * ---------->
+ * goto L3
+ * ...
+ * L1: (reference count reduced by 1)
+ * ifne/ifeq L2
+ * L3: (new label)
+ * ...
+ * L2: 
+ */
+int simplify_iconst_goto_ifeq(CODE **c) {
+  int v1;
+  int v2;
+  int l1, l2;
+  int l3;
+  CODE *l3_code;
+  if (is_ldc_int(*c, &v1) &&
+      is_goto(next(*c), &l1) &&
+      is_boolcmp(next(destination(l1)), &v2, &l2)) {
+    if ((v1!=0) == v2) {
+      droplabel(l1);
+      copylabel(l2);
+      return replace(c, 2, makeCODEgoto(l2, NULL));
+    } else if ((v1!=0) != v2) {
+      droplabel(l1);
+
+      l3 = next_label();
+      l3_code = makeCODElabel(l3, next(next(destination(l1))));
+      INSERTnewlabel(l3, "simplified_iconst_goto_ifeq", l3_code, 1);
+      next(destination(l1))->next = l3_code;
+
+      return replace(c, 2, makeCODEgoto(l3, NULL));
+    }
+  }
+  return 0;
+}
+
 
 int remove_dead_label(CODE **c) {
   int l;
@@ -340,8 +422,18 @@ int fuse_labels(CODE **c) {
 
 
 /*
- * ldc [not 0]
- * ifeq L
+ * ldc 0/[not 0]
+ * ifeq/ifneq L
+ * ...
+ * L:
+ * --------->
+ * goto L
+ * ...
+ * L:
+ *
+ * ==================================
+ * ldc 0/[not 0]
+ * ifne/ifeq L
  * ...
  * L:
  * --------->
@@ -352,11 +444,17 @@ int fuse_labels(CODE **c) {
 
 int remove_iconst_ifeq(CODE **c) {
   int v;
+  int b;
   int l;
-  if (is_ldc_int(*c, &v) && v!=0 &&
-      is_ifeq(next(*c),&l)) {
-    droplabel(l);
-    return replace(c, 2, NULL);
+  if (is_ldc_int(*c, &v) && 
+      is_boolcmp(next(*c),&b,&l)) {
+    if ((v!=0) == b) {
+      return replace(c, 2, makeCODEgoto(l, NULL));
+    }
+    else if ((v!=0) != b) {
+      droplabel(l);
+      return replace(c, 2, NULL);
+    }
   }
   return 0;
 }
@@ -830,4 +928,5 @@ void init_patterns(void) {
   ADD_PATTERN(basic_expression_pop);
   ADD_PATTERN(simplify_dup_ifeq_ifeq);
   ADD_PATTERN(simplify_dup_ifeq_ifne);
+  ADD_PATTERN(simplify_iconst_goto_ifeq);
 }
