@@ -161,33 +161,97 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
 
 /*
  * dup
- * ifeq L1
+ * ifeq/ifne L1
  * pop
  * ...
  * L1:
- * ifeq L2
+ * ifeq/ifne L2  (And same as first ifeq/ifneq)
  * ...
  * L2:
  * --------->
- * ifeq L2
+ * ifeq/ifne L2
  * ...
  * L1: (reference count reduced by 1)
- * ifeq L2
+ * ifeq/ifne L2
  * ...
  * L2: (reference count increased by 1)
  */
 int simplify_dup_ifeq_ifeq(CODE **c) {
   int l1, l2;
+  int d;
+  int aeq, beq;
   if (is_dup(*c) &&
-      is_ifeq(next(*c),&l1) &&
+      ( is_ifeq(next(*c),&l1) || is_ifne(next(*c),&l1)) &&
       is_pop(next(next(*c))) &&
-      is_ifeq(next(destination(l1)),&l2) ) {
-    droplabel(l1);
-    copylabel(l2);
-    return replace(c,3,makeCODEifeq(l2,NULL));
+      (is_ifeq(next(destination(l1)),&l2) || is_ifne(next(destination(l1)),&l2))
+      ) {
+    aeq = is_ifeq(next(*c), &d);
+    beq = is_ifeq(next(destination(l1)), &d);
+    if (aeq == beq) {
+      droplabel(l1);
+      copylabel(l2);
+      if (aeq) {
+        return replace(c,3,makeCODEifeq(l2,NULL));
+      }
+      else {
+        return replace(c,3,makeCODEifne(l2,NULL));
+      }
+    }
   }
   return 0;
 }
+
+/*
+ * dup
+ * ifeq/ifne L1
+ * pop
+ * ...
+ * L1:
+ * ifne/ifeq L2  (Different from first ifeq/ifne)
+ * ...
+ * L2:
+ * --------->
+ * ifeq/ifne L3
+ * ...
+ * L1: (reference count reduced by 1)
+ * ifne/ifeq L2
+ * L3: (new label)
+ * ...
+ * L2:
+ */
+int simplify_dup_ifeq_ifne(CODE **c) {
+  int l1, l2, l3;
+  int d;
+  int aeq, beq;
+  CODE *l3_code;
+  if (is_dup(*c) &&
+      ( is_ifeq(next(*c),&l1) || is_ifne(next(*c),&l1)) &&
+      is_pop(next(next(*c))) &&
+      (is_ifeq(next(destination(l1)),&l2) || is_ifne(next(destination(l1)),&l2))
+      ) {
+    aeq = is_ifeq(next(*c), &d);
+    beq = is_ifeq(next(destination(l1)), &d);
+    if (aeq != beq) {
+      droplabel(l1);
+
+      l3 = next_label();
+      l3_code = makeCODElabel(l3, next(next(destination(l1))));
+      INSERTnewlabel(l3, "asdf", l3_code, 1);
+      next(destination(l1))->next = l3_code;
+
+      if (aeq) {
+        replace(c,3,makeCODEifeq(l3,NULL));
+      }
+      else {
+        replace(c,3,makeCODEifne(l3,NULL));
+      }
+
+      return 1;
+    }
+  }
+  return 0;
+}
+
 
 
 int remove_dead_label(CODE **c) {
@@ -593,6 +657,17 @@ int simplify_acmp_null(CODE **c) {
 }
 
 
+/* Some words I wish to use throughout this code
+ * expression: does not use the stack beneath it and pushes a single value
+ * pure: no side effect
+ * instruction: a single instruction
+ * */
+int is_pure_expression_instruction(CODE *c) {
+  int d;
+  char *d2;
+  return (is_ldc_int(c, &d) || is_ldc_string(c,&d2) || is_aconst_null(c) ||
+      is_aload(c, &d) || is_iload(c, &d));
+}
 
 /* ldc/load #1
  * ldc/load #2
@@ -602,17 +677,12 @@ int simplify_acmp_null(CODE **c) {
  * #1
  * swp
  */
-int unswap(CODE **c) {
-  int d; /* dummy */
+int basic_unswap(CODE **c) {
   CODE *c1;
   CODE *c2;
   CODE *swap;
-  if ((is_ldc_int(*c, &d) || is_aload(*c, &d) ||
-        is_iload(*c, &d) || is_aconst_null(*c)
-        ) &&
-      (is_ldc_int(next(*c), &d) || is_aload(next(*c), &d) ||
-       is_iload(next(*c), &d) || is_aconst_null(*c)
-       ) &&
+  if (is_pure_expression_instruction(*c) &&
+      is_pure_expression_instruction(next(*c)) &&
       is_swap(next(next(*c)))) {
     c1 = *c;
     c2 = next(c1);
@@ -718,6 +788,20 @@ int remove_unnecessary_goto(CODE **c) {
 }
 
 
+/* pure_expression_instruction
+ * pop
+ * ---------->
+ * [nothing]
+ */
+int basic_expression_pop(CODE **c) {
+  if (is_pure_expression_instruction(*c) &&
+      is_pop(next(*c))) {
+    return replace(c, 2, NULL);
+  }
+  return 0;
+}
+
+
 void init_patterns(void) {
   /*ADD_PATTERN(constant_fold);*/
   ADD_PATTERN(goto_return);
@@ -729,7 +813,6 @@ void init_patterns(void) {
 	ADD_PATTERN(simplify_multiplication_right);
 	ADD_PATTERN(positive_increment);
   ADD_PATTERN(simplify_iconst_0_goto_ifeq);
-  ADD_PATTERN(simplify_dup_ifeq_ifeq);
 	ADD_PATTERN(simplify_goto_goto);
   ADD_PATTERN(remove_iconst_ifeq);
 	ADD_PATTERN(remove_dead_label);
@@ -738,10 +821,13 @@ void init_patterns(void) {
 	ADD_PATTERN(remove_instruction_after_return);
 	ADD_PATTERN(simplify_icmp_0);
 	ADD_PATTERN(simplify_acmp_null);
-	ADD_PATTERN(unswap);
-	ADD_PATTERN(remove_dead_store);
+	ADD_PATTERN(basic_unswap);
 	ADD_PATTERN(dup_pop);
   ADD_PATTERN(simplify_ldc_string_ifnonnull);
   ADD_PATTERN(remove_unnecessary_goto);
   ADD_PATTERN(simplify_concat_string_ifnonnull);
+	ADD_PATTERN(remove_dead_store);
+  ADD_PATTERN(basic_expression_pop);
+  ADD_PATTERN(simplify_dup_ifeq_ifeq);
+  ADD_PATTERN(simplify_dup_ifeq_ifne);
 }
