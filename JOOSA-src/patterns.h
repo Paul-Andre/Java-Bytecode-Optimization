@@ -65,21 +65,38 @@ int dup_pop(CODE **c)
   return 0;
 }
 
-/* iload x
- * ldc k   (0<=k<=127)
+/* ldc k   (0<=k<=127)
  * iadd
  * istore x
  * --------->
+ * istore x
  * iinc x k
  */ 
 int positive_increment(CODE **c)
-{ int x,y,k;
-  if (is_iload(*c,&x) &&
-      is_ldc_int(next(*c),&k) &&
-      is_iadd(next(next(*c))) &&
-      is_istore(next(next(next(*c))),&y) &&
-      x==y && 0<=k && k<=127) {
-     return replace(c,4,makeCODEiinc(x,k,NULL));
+{ int x,k;
+  if (is_ldc_int(*c,&k) &&
+      is_iadd(next(*c)) &&
+      is_istore(next(next(*c)),&x) &&
+      0<=k && k<=127) {
+     return replace(c,3,makeCODEistore(x,makeCODEiinc(x,k,NULL)));
+  }
+  return 0;
+}
+
+/* ldc k   (0<=k<=127)
+ * isub
+ * istore x
+ * --------->
+ * istore x
+ * iinc x -k
+ */ 
+int negative_increment(CODE **c)
+{ int x,k;
+  if (is_ldc_int(*c,&k) &&
+      is_isub(next(*c)) &&
+      is_istore(next(next(*c)),&x) &&
+      0<=k && k<=127) {
+     return replace(c,3,makeCODEistore(x,makeCODEiinc(x,-k,NULL)));
   }
   return 0;
 }
@@ -158,6 +175,65 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
   }
   return 0;
 }
+
+/*
+ * iconst_0
+ * goto L1
+ * ...
+ * L1:
+ * dup
+ * ifeq L2
+ * ...
+ * L2:
+ * --------->
+ * iconst 0
+ * goto L2
+ * ...
+ * L1: (reference count reduced by 1)
+ * dup
+ * ifeq L2
+ * ...
+ * L2: (reference count increased by 1)
+ */
+int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
+  int v;
+  int l1, l2;
+  if (is_ldc_int(*c,&v) && v==0 &&
+      is_goto(next(*c),&l1) &&
+      is_dup(next(destination(l1))) &&
+      is_ifeq(next(next(destination(l1))),&l2)
+      ) {
+    droplabel(l1);
+    copylabel(l2);
+    return replace(c,2,makeCODEldc_int(0, makeCODEgoto(l2,NULL)));
+  }
+  return 0;
+}
+
+/* iconst v (not 0)
+ * dup
+ * ifeq L1
+ * pop
+ * ...
+ * L1:
+ * ---------->
+ * [nothing]
+ * ...
+ * L1: (reference count reduced by 1)
+ */
+int simplify_iconst_1_dup_ifeq_pop(CODE **c) {
+  int v;
+  int l;
+  if (is_ldc_int(*c, &v) && v!=0 &&
+      is_dup(next(*c)) &&
+      is_ifeq(next(next(*c)), &l) &&
+      is_pop(next(next(next(*c)))) ) {
+    droplabel(l);
+    return replace(c,4,NULL);
+  }
+  return 0;
+}
+
 
 /*
  * dup
@@ -562,6 +638,32 @@ int simplify_istore_iload(CODE **c) {
   return 0;
 }
 
+/* aload k
+ * astore k
+ * ---------->
+ * [nothing]
+ */
+int simplify_aload_astore(CODE **c) {
+  int a, b;
+  if (is_aload(*c, &a) && is_astore(next(*c), &b) && a == b) {
+    return replace(c, 2, NULL);
+  }
+  return 0;
+}
+
+/* iload k
+ * istore k
+ * ---------->
+ * [nothing]
+ */
+int simplify_iload_istore(CODE **c) {
+  int a, b;
+  if (is_iload(*c, &a) && is_istore(next(*c), &b) && a == b) {
+    return replace(c, 2, NULL);
+  }
+  return 0;
+}
+
 
 /*
  * if_comparison L1
@@ -929,4 +1031,9 @@ void init_patterns(void) {
   ADD_PATTERN(simplify_dup_ifeq_ifeq);
   ADD_PATTERN(simplify_dup_ifeq_ifne);
   ADD_PATTERN(simplify_iconst_goto_ifeq);
+  ADD_PATTERN(simplify_iconst_0_goto_dup_ifeq);
+  ADD_PATTERN(simplify_iconst_1_dup_ifeq_pop);
+  ADD_PATTERN(negative_increment);
+	ADD_PATTERN(simplify_aload_astore);
+	ADD_PATTERN(simplify_iload_istore);
 }
