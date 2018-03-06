@@ -10,6 +10,7 @@
  * email: hendren@cs.mcgill.ca, mis@brics.dk
  */
 
+int set_label(CODE *c, int l);
 
 /* iload x        iload x        iload x
  * ldc 0          ldc 1          ldc 2
@@ -72,6 +73,7 @@ int dup_pop(CODE **c)
  * istore x
  * iinc x k
  */ 
+/* NOTE: this version might increase code size */
 int positive_increment(CODE **c)
 { int x,k;
   if (is_ldc_int(*c,&k) &&
@@ -90,6 +92,7 @@ int positive_increment(CODE **c)
  * istore x
  * iinc x -k
  */ 
+/* NOTE: this version might increase code size */
 int negative_increment(CODE **c)
 { int x,k;
   if (is_ldc_int(*c,&k) &&
@@ -101,7 +104,7 @@ int negative_increment(CODE **c)
   return 0;
 }
 
-/* goto L1
+/* goto/cmp L1
  * ...
  * L1:
  * goto L2
@@ -109,23 +112,29 @@ int negative_increment(CODE **c)
  * L2:
  * [not goto]
  * --------->
- * goto L2
+ * goto/cmp L2
  * ...
  * L1:    (reference count reduced by 1)
  * goto L2
  * ...
  * L2:    (reference count increased by 1)  
  * [not goto]
+ *
+ *
+ * The not goto at the end is required to ensure termination in a case of
+ * cyclical gotos
  */
 int simplify_goto_goto(CODE **c)
 { int l1,l2;
   int dummy;
-  if (is_goto(*c,&l1) &&
+  if (uses_label(*c,&l1) &&
       is_goto(next(destination(l1)),&l2) &&
       !is_goto(next(destination(l2)),&dummy)) {
      droplabel(l1);
      copylabel(l2);
-     return replace(c,1,makeCODEgoto(l2,NULL));
+     set_label(*c,l2);
+     /*return replace(c,1,makeCODEgoto(l2,NULL));*/
+     return 1;
   }
   return 0;
 }
@@ -1020,10 +1029,11 @@ int check_and_compare_string(int f(CODE *,char **), CODE *a, CODE *b) {
   return (f(a, &x) && f(b, &y) && strcmp(x, y)==0 );
 }
 
+/* This is horrible. I was probably tired when I did this */
 int instructions_equal(CODE *a, CODE *b) {
   int xa,ya,xb,yb;
+  if (a->kind != b->kind) return 0;
   return 
-
     check_and_compare(is_nop, a, b) ||
     check_and_compare(is_i2c, a, b) ||
     check_and_compare(is_imul, a, b) ||
