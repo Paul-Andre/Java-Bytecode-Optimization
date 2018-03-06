@@ -107,6 +107,7 @@ int negative_increment(CODE **c)
  * goto L2
  * ...
  * L2:
+ * [not goto]
  * --------->
  * goto L2
  * ...
@@ -114,10 +115,14 @@ int negative_increment(CODE **c)
  * goto L2
  * ...
  * L2:    (reference count increased by 1)  
+ * [not goto]
  */
 int simplify_goto_goto(CODE **c)
 { int l1,l2;
-  if (is_goto(*c,&l1) && is_goto(next(destination(l1)),&l2) && l1>l2) {
+  int dummy;
+  if (is_goto(*c,&l1) &&
+      is_goto(next(destination(l1)),&l2) &&
+      !is_goto(next(destination(l2)),&dummy)) {
      droplabel(l1);
      copylabel(l2);
      return replace(c,1,makeCODEgoto(l2,NULL));
@@ -1001,6 +1006,119 @@ int basic_expression_pop(CODE **c) {
   return 0;
 }
 
+int check_and_compare(int f(CODE *), CODE *a, CODE *b) {
+  return (f(a) && f(b));
+}
+
+int check_and_compare_int(int f(CODE *,int *), CODE *a, CODE *b) {
+  int x, y;
+  return (f(a, &x) && f(b, &y) && x==y);
+}
+
+int check_and_compare_string(int f(CODE *,char **), CODE *a, CODE *b) {
+  char *x, *y;
+  return (f(a, &x) && f(b, &y) && strcmp(x, y)==0 );
+}
+
+int instructions_equal(CODE *a, CODE *b) {
+  int xa,ya,xb,yb;
+  return 
+
+    check_and_compare(is_nop, a, b) ||
+    check_and_compare(is_i2c, a, b) ||
+    check_and_compare(is_imul, a, b) ||
+    check_and_compare(is_ineg, a, b) ||
+    check_and_compare(is_irem, a, b) ||
+    check_and_compare(is_isub, a, b) ||
+    check_and_compare(is_idiv, a, b) ||
+    check_and_compare(is_iadd, a, b) ||
+    check_and_compare(is_ireturn, a, b) ||
+    check_and_compare(is_areturn, a, b) ||
+    check_and_compare(is_return, a, b) ||
+    check_and_compare(is_dup, a, b) ||
+    check_and_compare(is_pop, a, b) ||
+    check_and_compare(is_swap, a, b) ||
+
+    check_and_compare_int(is_label, a, b) ||
+    check_and_compare_int(is_goto, a, b) ||
+    check_and_compare_int(is_ifeq, a, b) ||
+    check_and_compare_int(is_ifne, a, b) ||
+    check_and_compare_int(is_if_acmpeq, a, b) ||
+    check_and_compare_int(is_if_acmpne, a, b) ||
+    check_and_compare_int(is_ifnull, a, b) ||
+    check_and_compare_int(is_ifnonnull, a, b) ||
+    check_and_compare_int(is_if_icmpeq, a, b) ||
+    check_and_compare_int(is_if_icmpgt, a, b) ||
+    check_and_compare_int(is_if_icmplt, a, b) ||
+    check_and_compare_int(is_if_icmple, a, b) ||
+    check_and_compare_int(is_if_icmpge, a, b) ||
+    check_and_compare_int(is_if_icmpne, a, b) ||
+    check_and_compare_int(is_aload, a, b) ||
+    check_and_compare_int(is_astore, a, b) ||
+    check_and_compare_int(is_iload, a, b) ||
+    check_and_compare_int(is_istore, a, b) ||
+    check_and_compare_int(is_ldc_int, a, b) ||
+
+    check_and_compare_string(is_new, a, b) ||
+    check_and_compare_string(is_instanceof, a, b) ||
+    check_and_compare_string(is_checkcast, a, b) ||
+    check_and_compare_string(is_ldc_string, a, b) ||
+    check_and_compare_string(is_getfield, a, b) ||
+    check_and_compare_string(is_putfield, a, b) ||
+    check_and_compare_string(is_invokevirtual, a, b) ||
+    check_and_compare_string(is_invokenonvirtual, a, b) ||
+
+    (is_iinc(a, &xa, &ya) && is_iinc(b, &xb, &yb) && xa==ya && xb==yb)
+    ;
+}
+
+
+
+/* instruction
+ * goto L1
+ * ...
+ * same instruction
+ * goto L1 / L1:
+ * ...
+ * L1:
+ * --------->
+ * goto L3
+ * ...
+ * L3:(new label)
+ * same instruction
+ * goto L1 / L1:
+ * ...
+ * L1 (reference count reduced by 1)
+ */
+int factor_instruction(CODE **c) {
+  CODE *p, *prev;
+  /*int count = 64;*/
+  int l1, l2, l3;
+  CODE *l3_code;
+  int d; /*dummy*/
+  if ((!is_label(*c,&d)) &&
+        is_goto(next(*c), &l1)){
+    prev = next(*c);
+    p = next(next(*c));
+    while(p!=NULL) {
+      if (instructions_equal(*c, p) &&
+          (is_goto(next(p), &l2) || is_label(next(p),&l2)) && l1==l2 ) {
+        printf("%d %d \n",l1,l2);
+        l3 = next_label();
+        l3_code = makeCODElabel(l3, p);
+        prev->next = l3_code;
+        INSERTnewlabel(l3,"factoring",l3_code,1);
+        droplabel(l1);
+        return replace(c, 2, makeCODEgoto(l3, NULL));
+      }
+      prev = p;
+      p = next(p);
+    }
+  }
+  return 0;
+}
+
+
 
 void init_patterns(void) {
   /*ADD_PATTERN(constant_fold);*/
@@ -1036,4 +1154,5 @@ void init_patterns(void) {
   ADD_PATTERN(negative_increment);
 	ADD_PATTERN(simplify_aload_astore);
 	ADD_PATTERN(simplify_iload_istore);
+	ADD_PATTERN(factor_instruction);
 }
