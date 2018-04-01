@@ -73,7 +73,7 @@ int dup_pop(CODE **c)
  * istore x
  * iinc x k
  */ 
-/* NOTE: this version might increase code size */
+/* XXX: this version can possibly increase code size */
 int positive_increment(CODE **c)
 { int x,k;
   if (is_ldc_int(*c,&k) &&
@@ -92,7 +92,7 @@ int positive_increment(CODE **c)
  * istore x
  * iinc x -k
  */ 
-/* NOTE: this version might increase code size */
+/* XXX: this version can possibly increase code size */
 int negative_increment(CODE **c)
 { int x,k;
   if (is_ldc_int(*c,&k) &&
@@ -138,27 +138,6 @@ int simplify_goto_goto(CODE **c)
   }
   return 0;
 }
-
-
-/* Simplifies a chain of gotos, detecting loops.
- */
-/*
-int simplify_goto_chain(CODE **c) {
-  int label;
-  if (is_goto(*c, &label)) {
-    int previously_seen[16];
-    int index = 0;
-    int current = &label;
-    previously_seen[index] = current;
-    index ++;
-    while (true) {
-      int next_label;
-      if (is_goto(next(destination(current)), &next_label)) {
-      }
-      }
-      }
-      }
-      */
 
 
 /*
@@ -1015,6 +994,8 @@ int basic_expression_pop(CODE **c) {
   return 0;
 }
 
+
+
 int check_and_compare(int f(CODE *), CODE *a, CODE *b) {
   return (f(a) && f(b));
 }
@@ -1083,7 +1064,10 @@ int instructions_equal(CODE *a, CODE *b) {
 }
 
 
-
+/// XXX: this is not sound.
+/// The main reason it is not sound is that a single JVM instruction can be
+/// executed on different possible types. Because of that, merging two branches
+/// might make the JVM verification fail.
 /* instruction
  * goto L1
  * ...
@@ -1164,5 +1148,5 @@ void init_patterns(void) {
   ADD_PATTERN(negative_increment);
 	ADD_PATTERN(simplify_aload_astore);
 	ADD_PATTERN(simplify_iload_istore);
-	ADD_PATTERN(factor_instruction);
+	/*ADD_PATTERN(factor_instruction);*/
 }
