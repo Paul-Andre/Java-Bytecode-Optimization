@@ -1064,11 +1064,13 @@ int instructions_equal(CODE *a, CODE *b) {
 }
 
 
+/*
 /// XXX: this is not sound.
 /// The main reason it is not sound is that a single JVM instruction can be
 /// executed on different possible types. Because of that, merging two branches
 /// might make the JVM verification fail.
-/* instruction
+
+ * instruction
  * goto L1
  * ...
  * same instruction
