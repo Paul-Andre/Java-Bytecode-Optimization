@@ -465,38 +465,40 @@ CODE *makeCODEboolcmp(int v, int l, CODE *next) {
 }
 
 
-/* iconst_0/1
- * goto L1
+/* iconst_0/1               [ 0 ] or [ 1 ]
+ * goto L1                  [ 0 ] or [ 1 ]
  * ...
- * L1:
- * ifeq/ifne L2
+ * L1:                      [ 0 ] or [ 1 ]
+ * ifeq/ifne L2             [ * ]           Jump to L2 in either case
  * ...
- * L2
+ * L2                       [ * ]
  * ---------->
- * goto L2
+ * goto L2                  [ * ]
  * ...
- * L1: (reference count reduced by 1)
- * ifeq/ifne L2
+ * L1: (reference count reduced by 1) | Not reached 
+ * ifeq/ifne L2                       | Not reached
  * ...
- * L2: (reference count increased by 1)
+ * L2: (reference count increased by 1) [ * ]
  *
  * ==========================================
  *
- * iconst_0/1
- * goto L1
+ * iconst_0/1               [ 0 ] or [ 1 ]
+ * goto L1                  [ 0 ] or [ 1 ]
  * ...
- * L1:
- * ifne/ifeq L2
+ * L1:                      [ 0 ] or [ 1 ]
+ * ifne/ifeq L2             [ * ]           No jump to L2 in either case
  * ...
- * L2:
+ * L2:                      
  * ---------->
- * goto L3
+ * goto L3                  [ * ]
  * ...
- * L1: (reference count reduced by 1)
- * ifne/ifeq L2
- * L3: (new label)
+ * L1:                                      (reference count reduced by 1) | Not reached
+ * ifne/ifeq L2                                                            | Not reached
+ * L3:                      [ * ]           (new label)
  * ...
  * L2: 
+ *
+ * 
  */
 int simplify_iconst_goto_ifeq(CODE **c) {
   int v1;
@@ -528,6 +530,7 @@ int simplify_iconst_goto_ifeq(CODE **c) {
 
 /*
  * Deletes a label that has reference count zero.
+ * We never increment the reference count of a label that has no goto pointing to it
  */
 int remove_dead_label(CODE **c) {
   int l;
@@ -597,7 +600,7 @@ int set_label(CODE *c, int l) {
  * --------->
  * goto/cmp L2
  * ...
- * L1: (reference count reduced by 1)
+ * L1: (reference count reduced by 1)       | Not reached
  * L2: (reference count increased by 1)
  *
  *
@@ -617,24 +620,24 @@ int fuse_labels(CODE **c) {
 
 
 /*
- * ldc 0/[not 0]
- * ifeq/ifneq L
+ * ldc 0/[not 0]            [ 0 ] or [ k ] (k != 0)
+ * ifeq/ifneq L             [ * ]          Jump to L in either case
  * ...
- * L:
+ * L:                       [ * ]
  * --------->
- * goto L
+ * goto L                   [ * ]
  * ...
- * L:
+ * L:                       [ * ]
  *
  * ==================================
- * ldc 0/[not 0]
- * ifne/ifeq L
+ * ldc 0/[not 0]            [ 0 ] or [ k ] (k != 0)
+ * ifne/ifeq L              [ * ]          No jump in either case
  * ...
  * L:
  * --------->
- * nop
+ * nop                      [ * ]
  * ...
- * L: (reference counter reduced by 1)
+ * L:                                      (reference counter reduced by 1)
  */
 
 int remove_iconst_ifeq(CODE **c) {
@@ -656,12 +659,15 @@ int remove_iconst_ifeq(CODE **c) {
 
 
 
-/*
- * dup
- * xxx [any instruction that only uses the top value and removes it]
- * pop
+/* [before]         [ ... k * ]
+ * dup              [ ... k k ]
+ * xxx              [ ... k * ] (any instruction that only uses the top value and removes it)
+ * pop              [ ... * * ]
  * --------->
- * xxx
+ * [before]         [ ... k * ]
+ * xxx              [ ... * * ]
+ *
+ *
  */
 
 int simplify_dup_xxx_pop(CODE **c) {
@@ -681,15 +687,16 @@ int simplify_dup_xxx_pop(CODE **c) {
 }
 
 
-/* dup
- * aload k (usually 0)
- * swap
- * putfield
- * pop
+/* [before]             [ c * * ]
+ * dup                  [ c c * ]
+ * aload k              [ c c k ] (k usually 0)
+ * swap                 [ c k c ]
+ * putfield             [ c * * ]
+ * pop                  [ * * * ]
  * --------->
- * aload k
- * swap
- * putfield
+ * aload k              [ c k * ]
+ * swap                 [ k c * ]
+ * putfield             [ * * * ]
  *
  * I believe this pattern occurs when storing to a member variable of the
  * current class
@@ -712,11 +719,11 @@ int simplify_member_store(CODE **c) {
 
 
 
-/*
- * dup
- * pop
+/* [before]     [ k * ]
+ * dup          [ k k ]
+ * pop          [ k * ]
  * --------->
- * nop
+ * nop          [ k * ]
  */
 int remove_dup_pop(CODE **c) {
   if (is_dup(*c) && is_pop(next(*c))) {
@@ -725,12 +732,14 @@ int remove_dup_pop(CODE **c) {
   return 0;
 }
 
-/*
- * astore k
- * aload k
+/* [before]     [ k ]
+ * astore k     [ * ]
+ * aload k      [ k ]
  * --------->
- * dup
- * astore k
+ * dup          [ k k ]
+ * astore k     [ k * ]
+ *
+ * XXX: We're not actually using this as it uses more stack than the normal code
  */
 
 int simplify_astore_aload(CODE **c) {
@@ -741,12 +750,14 @@ int simplify_astore_aload(CODE **c) {
   return 0;
 }
 
-/*
- * istore k
- * iload k
+/* [before]     [ k ]
+ * istore k     [ * ]
+ * iload k      [ k ]
  * --------->
- * dup
- * istore k
+ * dup          [ k k ]
+ * istore k     [ k * ]
+ *
+ * XXX: We're not actually using this as it uses more stack than the normal code
  */
 
 int simplify_istore_iload(CODE **c) {
@@ -757,10 +768,10 @@ int simplify_istore_iload(CODE **c) {
   return 0;
 }
 
-/* aload k
- * astore k
+/* aload k      [ k ]
+ * astore k     [ * ]
  * ---------->
- * nop
+ * nop          [ * ]
  */
 int simplify_aload_astore(CODE **c) {
   int a, b;
@@ -770,10 +781,10 @@ int simplify_aload_astore(CODE **c) {
   return 0;
 }
 
-/* iload k
- * istore k
+/* iload k      [ k ]
+ * istore k     [ * ]
  * ---------->
- * nop
+ * nop          [ * ]
  */
 int simplify_iload_istore(CODE **c) {
   int a, b;
@@ -785,7 +796,7 @@ int simplify_iload_istore(CODE **c) {
 
 
 /*
- * if_comparison L1
+ * if_comparison L1         [ 
  * goto L2
  * L1:
  * ..
@@ -1301,8 +1312,8 @@ void init_patterns(void) {
   ADD_PATTERN(invert_comparison);
 	ADD_PATTERN(simplify_dup_xxx_pop);
 	ADD_PATTERN(simplify_member_store);
-	ADD_PATTERN(simplify_astore_aload);
-	ADD_PATTERN(simplify_istore_iload);
+/*	ADD_PATTERN(simplify_astore_aload);*/
+/*	ADD_PATTERN(simplify_istore_iload);*/
 	ADD_PATTERN(simplify_multiplication_right);
 	ADD_PATTERN(positive_increment);
   ADD_PATTERN(simplify_iconst_0_goto_ifeq);
