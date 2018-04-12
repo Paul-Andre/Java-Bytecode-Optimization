@@ -309,7 +309,6 @@ int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
  * ...
  * L1: (reference count reduced by 1)
  *
- * TODO: replace by NOP
  *
  * Reduces size of bytecode
  */
@@ -321,7 +320,7 @@ int simplify_iconst_1_dup_ifeq_pop(CODE **c) {
       is_ifeq(next(next(*c)), &l) &&
       is_pop(next(next(next(*c)))) ) {
     droplabel(l);
-    return replace(c,4,NULL);
+    return replace(c,4,makeCODEnop(NULL));
   }
   return 0;
 }
@@ -643,7 +642,7 @@ int remove_iconst_ifeq(CODE **c) {
     }
     else if ((v!=0) != b) {
       droplabel(l);
-      return replace(c, 2, NULL);
+      return replace(c, 2, makeCODEnop(NULL));
     }
   }
   return 0;
@@ -715,7 +714,7 @@ int simplify_member_store(CODE **c) {
  */
 int remove_dup_pop(CODE **c) {
   if (is_dup(*c) && is_pop(next(*c))) {
-    return replace(c, 2, NULL);
+    return replace(c, 2, makeCODEnop(NULL));
   }
   return 0;
 }
@@ -760,7 +759,7 @@ int simplify_istore_iload(CODE **c) {
 int simplify_aload_astore(CODE **c) {
   int a, b;
   if (is_aload(*c, &a) && is_astore(next(*c), &b) && a == b) {
-    return replace(c, 2, NULL);
+    return replace(c, 2, makeCODEnop(NULL));
   }
   return 0;
 }
@@ -773,7 +772,7 @@ int simplify_aload_astore(CODE **c) {
 int simplify_iload_istore(CODE **c) {
   int a, b;
   if (is_iload(*c, &a) && is_istore(next(*c), &b) && a == b) {
-    return replace(c, 2, NULL);
+    return replace(c, 2, makeCODEnop(NULL));
   }
   return 0;
 }
@@ -1122,12 +1121,11 @@ int remove_unnecessary_goto(CODE **c) {
  *
  *  
  *
- * TODO: Might want to replace this by a NOP
  */
 int basic_expression_pop(CODE **c) {
   if (is_pure_expression_instruction(*c) &&
       is_pop(next(*c))) {
-    return replace(c, 2, NULL);
+    return replace(c, 2, makeCODEnop(NULL));
   }
   return 0;
 }
@@ -1275,6 +1273,21 @@ int factor_instruction(CODE **c) {
 }
 
 
+/* 
+ * nop
+ * [not end of method]
+ * --------->
+ * [nothing]
+ */
+int remove_nop(CODE **c) {
+    if (next(*c) != NULL && is_nop(*c)) {
+        return replace(c, 1, NULL);
+    }
+
+    return 0;
+}
+
+
 
 void init_patterns(void) {
   ADD_PATTERN(constant_fold);
@@ -1311,4 +1324,5 @@ void init_patterns(void) {
 	ADD_PATTERN(simplify_aload_astore);
 	ADD_PATTERN(simplify_iload_istore);
 	ADD_PATTERN(factor_instruction);
+    ADD_PATTERN(remove_nop);
 }
