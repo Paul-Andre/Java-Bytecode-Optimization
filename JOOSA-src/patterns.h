@@ -1017,7 +1017,7 @@ int basic_unswap(CODE **c) {
   return 0;
 }
 
-#define N_LOOKAHEAD 32
+#define N_LOOKAHEAD 200
 
 /* Navigates the code to check that the variable is not loaded
  *
@@ -1244,7 +1244,7 @@ int instructions_equal_and_safe_to_factor(CODE *a, CODE *b) {
  * of class B, if we factor out the pop instruction, we will not pass
  * verification because stack types will not match.
  *
- * Because of this I only factor instructions that consume 
+ * Because of this we only factor instructions that either consume int
  *
  *
  *
