@@ -930,12 +930,14 @@ int remove_dead_store(CODE **c) {
   return 0;
 }
 
-/* ldc "asdfasdf"
- * dup
- * ifnonnull L1
+/* ldc "some litteral"  [ s * ]
+ * dup                  [ s s ]
+ * ifnonnull L1         [ s * ] and goes to L1
  * ---------->
- * ldc "asdfasdf"
- * goto L1
+ * ldc "some litteral"  [ s * ]
+ * goto L1              [ s * ] and goes to L1
+ *
+ * We are allowed to ignore the null check because a string literal is not null.
  */
 
 int simplify_ldc_string_ifnonnull(CODE **c) {
@@ -947,12 +949,18 @@ int simplify_ldc_string_ifnonnull(CODE **c) {
   return 0;
 }
 
-/* invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;
- * dup
- * ifnonnull L1
+/* [before]         [ s1 s2 ]
+ * invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;      [ s3 * ]
+ * dup              [ s3 s3 ]
+ * ifnonnull L1     [ s3 *  ]   and go to label L1
  * ---------->
- * invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;
- * goto L1
+ * [before]         [ s1 s2 ]
+ * invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;      [ s3 *] 
+ * goto L1          [ s3 *  ]   and go to label L1   
+ *
+ * Here we assume that a string concatenation will never return a null.
+ * Even if its arguments are null, it will not return a null but throw an exception instead
+ *
  */
 
 int simplify_concat_string_ifnonnull(CODE **c) {
