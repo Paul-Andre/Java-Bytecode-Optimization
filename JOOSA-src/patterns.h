@@ -16,6 +16,7 @@
  *
  * Byte code size
  * Number of jumps to a [goto] or a [dup; ifeq] sequence
+ * Number of loads
  * Number of multiplication
  * Number of labels
  * Number of jumps that don't use the lowest label when an instruction has multiple labels
@@ -285,7 +286,7 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
  *
  *
  * Improvement:
- *      decreases the number of jumps to [goto] or [dup; ifeq] while keeping bytecode count the same
+ *      decreases the number of jumps to [goto] or [dup; ifeq] while keeping everything else the same
  *
  */
 int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
@@ -315,8 +316,8 @@ int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
  * ...
  * L1: (reference count reduced by 1)
  *
- *
- * Reduces size of bytecode
+ * Improvement:
+ *      Reduces size of bytecode
  */
 int simplify_iconst_1_dup_ifeq_pop(CODE **c) {
   int v;
@@ -355,7 +356,8 @@ int simplify_iconst_1_dup_ifeq_pop(CODE **c) {
  * L2: (ref count ++ )              [ * * ]
  *
  *
- * Reduces size of bytecode
+ * Improvement:
+ *      Reduces size of bytecode
  */
 int simplify_dup_ifeq_ifeq(CODE **c) {
   int l1, l2;
@@ -405,7 +407,8 @@ int simplify_dup_ifeq_ifeq(CODE **c) {
  * L2:
  *
  *
- * Decreases size of bytecode
+ * Improvement:
+ *      Reduces size of bytecode
  */
 int simplify_dup_ifeq_ifne(CODE **c) {
   int l1, l2, l3;
@@ -498,6 +501,9 @@ CODE *makeCODEboolcmp(int v, int l, CODE *next) {
  * ...
  * L2: 
  *
+ *
+ * Improvement:
+ *      Reduces bytecode size
  * 
  */
 int simplify_iconst_goto_ifeq(CODE **c) {
@@ -530,7 +536,10 @@ int simplify_iconst_goto_ifeq(CODE **c) {
 
 /*
  * Deletes a label that has reference count zero.
- * We never increment the reference count of a label that has no goto pointing to it
+ * We never increment the reference count of a label that has no goto pointing to it.
+ *
+ * Improvement:
+ *      Reduces the number of labels while keeping everything else the same
  */
 int remove_dead_label(CODE **c) {
   int l;
@@ -540,7 +549,7 @@ int remove_dead_label(CODE **c) {
   return 0;
 }
 
-
+/* Helper to change the label of a jump */
 int set_label(CODE *c, int l) {
   switch (c->kind) {
 
@@ -600,9 +609,14 @@ int set_label(CODE *c, int l) {
  * --------->
  * goto/cmp L2
  * ...
- * L1: (reference count reduced by 1)       | Not reached
+ * L1: (reference count reduced by 1)       | Not reached in the context of current pattern
  * L2: (reference count increased by 1)
  *
+ *
+ * Improvement:
+ *      After the peephole runs this multiple times, there will be one jump
+ *      less that doesn't use the lowest label for a given instruction.
+ *      Everything else stays the same
  *
  */
 int fuse_labels(CODE **c) {
@@ -638,6 +652,10 @@ int fuse_labels(CODE **c) {
  * nop                      [ * ]
  * ...
  * L:                                      (reference counter reduced by 1)
+ *
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 
 int remove_iconst_ifeq(CODE **c) {
@@ -667,7 +685,8 @@ int remove_iconst_ifeq(CODE **c) {
  * [before]         [ ... k * ]
  * xxx              [ ... * * ]
  *
- *
+ * Improvement:
+ *      Reduces bytecode size
  */
 
 int simplify_dup_xxx_pop(CODE **c) {
@@ -689,7 +708,7 @@ int simplify_dup_xxx_pop(CODE **c) {
 
 /* [before]             [ c * * ]
  * dup                  [ c c * ]
- * aload k              [ c c k ] (k usually 0)
+ * aload k              [ c c k ] (k usually 0 which is the "this" object)
  * swap                 [ c k c ]
  * putfield             [ c * * ]
  * pop                  [ * * * ]
@@ -700,6 +719,9 @@ int simplify_dup_xxx_pop(CODE **c) {
  *
  * I believe this pattern occurs when storing to a member variable of the
  * current class
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 
 int simplify_member_store(CODE **c) {
@@ -724,6 +746,9 @@ int simplify_member_store(CODE **c) {
  * pop          [ k * ]
  * --------->
  * nop          [ k * ]
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 int remove_dup_pop(CODE **c) {
   if (is_dup(*c) && is_pop(next(*c))) {
@@ -732,14 +757,17 @@ int remove_dup_pop(CODE **c) {
   return 0;
 }
 
-/* [before]     [ k ]
- * astore k     [ * ]
- * aload k      [ k ]
+/* [before]     [ a ]
+ * astore k     [ * ]   (1-2 bytes) a gets stored in k
+ * aload k      [ a ]   (1-2 bytes)
  * --------->
- * dup          [ k k ]
- * astore k     [ k * ]
+ * dup          [ a a ] (1 byte)
+ * astore k     [ a * ] (1-2 bytes)
  *
- * XXX: We're not actually using this as it uses more stack than the normal code
+ * In both cases we end up storing i in k 
+ *
+ * Improvement:
+ *      It doesn't increase bytecode size and reduces number of loads
  */
 
 int simplify_astore_aload(CODE **c) {
@@ -750,14 +778,17 @@ int simplify_astore_aload(CODE **c) {
   return 0;
 }
 
-/* [before]     [ k ]
- * istore k     [ * ]
- * iload k      [ k ]
+/* [before]     [ i ]
+ * istore k     [ * ]   (1-2 bytes)     i gets stored in k
+ * iload k      [ i ]   (1-2 bytes)
  * --------->
- * dup          [ k k ]
- * istore k     [ k * ]
+ * dup          [ i i ] (1 bytes)
+ * istore k     [ i * ] (1-2 bytes)
  *
- * XXX: We're not actually using this as it uses more stack than the normal code
+ * In both cases we end up storing i in k 
+ *
+ * Improvement:
+ *      It doesn't increase bytecode size and reduces number of loads
  */
 
 int simplify_istore_iload(CODE **c) {
@@ -768,10 +799,15 @@ int simplify_istore_iload(CODE **c) {
   return 0;
 }
 
-/* aload k      [ k ]
+/* aload k      [ a ]
  * astore k     [ * ]
  * ---------->
  * nop          [ * ]
+ *
+ * Since we store back the value we loaded from k, it essentially does nothin
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 int simplify_aload_astore(CODE **c) {
   int a, b;
@@ -781,10 +817,15 @@ int simplify_aload_astore(CODE **c) {
   return 0;
 }
 
-/* iload k      [ k ]
+/* iload k      [ a ]
  * istore k     [ * ]
  * ---------->
  * nop          [ * ]
+ *
+ * Since we store back the value we loaded from k, it essentially does nothin
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 int simplify_iload_istore(CODE **c) {
   int a, b;
@@ -796,16 +837,22 @@ int simplify_iload_istore(CODE **c) {
 
 
 /*
- * if_comparison L1         [ 
+ * if_comparison L1 
  * goto L2
  * L1:
  * ..
  * L2:
  * --------->
  * if_not_comparison L2
- * L1: (reference counter reduced by 1)
+ * L1: (ref count --)
  *
- * L2: (reference counter stays the same)
+ * L2: (ref count ++)
+ *
+ * Whatever things that were on the stack for the first comparison are consumed
+ * exactly in the same way by the second comparison.
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 int invert_comparison(CODE **c) {
   int l1;
@@ -908,6 +955,22 @@ int invert_comparison(CODE **c) {
 }
 
 
+
+/*
+ * goto L1 
+ * ..
+ * L1:
+ * return
+ * --------->
+ * return
+ * ..
+ * L1:  (ref count --)
+ *
+ * Improvement:
+ *      Reduces bytecode size
+ *
+ */
+
 int goto_return(CODE **c) {
   int l1;
   if(is_goto(*c, &l1) && is_return(next(destination(l1)))) {
@@ -987,8 +1050,8 @@ int simplify_acmp_null(CODE **c) {
 }
 
 
-/* Some words I wish to use throughout this code
- * expression: does not use the stack beneath it and pushes a single value
+/* Checks if some code is:
+ * an expression: does not use the stack beneath it and pushes a single value
  * pure: no side effect
  * instruction: a single instruction
  * */
