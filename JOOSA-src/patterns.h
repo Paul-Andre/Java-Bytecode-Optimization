@@ -10,15 +10,31 @@
  * email: hendren@cs.mcgill.ca, mis@brics.dk
  */
 
+
+/* Every pattern improves at least one of the following things, with the first
+ * thing being of the highest priority
+ *
+ * Byte code size
+ * Number of jumps to goto, number of jumps to dup, Number of labels
+ * Number of multiplication
+ *
+ *
+ * TODO: if relevant, indicate in what order
+ */
+
 int set_label(CODE *c, int l);
 
-/* iload x        iload x        iload x
- * ldc 0          ldc 1          ldc 2
- * imul           imul           imul
+/* iload x        iload x        iload x (1-2 bytes)
+ * ldc 0          ldc 1          ldc 2   (1 byte)
+ * imul           imul           imul    (1 byte
  * ------>        ------>        ------>
- * ldc 0          iload x        iload x
- *                               dup
- *                               iadd
+ * ldc 0          iload x        iload x (1-2 bytes)
+ *                               dup     (1 byte)
+ *                               iadd    (1 byte)
+ *
+ * Improvement:
+ *      First two changes reduce bytecode count.
+ *      Third change keeps all measures the same but reduces the number of multiplications.
  */
 
 int simplify_multiplication_right(CODE **c)
@@ -43,8 +59,12 @@ int simplify_multiplication_right(CODE **c)
  * -------->
  * [before]         [ a * ]
  * astore x         [ * * ]     a is stored at x
- */
-/* Duplicated value is unused and popped later on
+ *
+ *
+ * Duplicated value is unused and popped later on
+ *
+ * Improvement:
+ *      Reduces bytecode size.
  */
 int simplify_astore(CODE **c)
 { int x;
@@ -62,8 +82,13 @@ int simplify_astore(CODE **c)
  * -------->
  * [before]         [ a * ]
  * [nothing]        [ a * ]
- */
-/* Duplicated value is popped right away
+ *
+ * Duplicated value is popped right away
+ *
+ * Improvement:
+ *      Reduces bytecode count
+ *
+ * TODO:
  */
 int dup_pop(CODE **c)
 {
@@ -246,7 +271,7 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
  * ...
  * L2:              [ 0 * ]     (reference count increased by 1)
  *
- *
+ * TODO: might not teminate
  */
 int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
   int v;
@@ -263,16 +288,20 @@ int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
   return 0;
 }
 
-/* iconst v (not 0)
- * dup
- * ifeq L1
- * pop
+/* iconst v (v != 0)        [ v ]
+ * dup                      [ v v ]
+ * ifeq L1                  [ v * ]     Never jumps since v!=0
+ * pop                      [ * ]
  * ...
- * L1:
+ * L1:                                  | Not visited anymore in the context of the current pattern
  * ---------->
- * [nothing]
+ * [nothing]                [*]
  * ...
  * L1: (reference count reduced by 1)
+ *
+ * TODO: replace by NOP
+ *
+ * Reduces size of bytecode
  */
 int simplify_iconst_1_dup_ifeq_pop(CODE **c) {
   int v;
@@ -289,21 +318,29 @@ int simplify_iconst_1_dup_ifeq_pop(CODE **c) {
 
 
 /*
- * dup
- * ifeq/ifne L1
- * pop
+ *  [before]                        [ a ]
+ * dup                              [ a a ]
+ * ifeq/ifne L1                     [ a * ]     Possibly going to L1
+ * pop                              [ * ]
  * ...
- * L1:
- * ifeq/ifne L2  (And same as first ifeq/ifneq)
+ * L1:                              [ a * ]  
+ * ifeq/ifne L2 (same check)        [ * * ]     If this is exactly the same check the outcome will be the same when applied to a.
+ *                                              If we got here by jumping from the first comparison, we would also do this second
+ *                                              jump and go to L2
  * ...
- * L2:
+ * L2:                              [ * * ]
  * --------->
- * ifeq/ifne L2
+ *
+ *  [before]                        [ a * ]
+ * ifeq/ifne L2                     [ * * ]
  * ...
- * L1: (reference count reduced by 1)
- * ifeq/ifne L2
+ * L1: (ref count -- )                      
+ * ifeq/ifne L2                             
  * ...
- * L2: (reference count increased by 1)
+ * L2: (ref count ++ )              [ * * ]
+ *
+ *
+ * Reduces size of bytecode
  */
 int simplify_dup_ifeq_ifeq(CODE **c) {
   int l1, l2;
@@ -331,22 +368,29 @@ int simplify_dup_ifeq_ifeq(CODE **c) {
 }
 
 /*
- * dup
- * ifeq/ifne L1
- * pop
+ * [before]                         [ a * ]
+ * dup                              [ a a ]
+ * ifeq/ifne L1                     [ a * ]     Possibly going to L1
+ * pop                              [ * * ]
  * ...
- * L1:
- * ifne/ifeq L2  (Different from first ifeq/ifne)
+ * L1:                              [ a * ]  
+ * ifne/ifeq L2  (Opposite check)   [ * * ]     If this is a check opposite to the first one, then if we reached this instruction
+ *                                              by jumping from the first check, then this will be false.
  * ...
  * L2:
  * --------->
- * ifeq/ifne L3
+ *
+ *  [before]                        [ a ]
+ * ifeq/ifne L3                     [ * ]
  * ...
- * L1: (reference count reduced by 1)
- * ifne/ifeq L2
- * L3: (new label)
+ * L1: (refercount reduced by 1)        | Not reachable in the context of the current pattern
+ * ifne/ifeq L2                         | Not reachable in the context of the current pattern
+ * L3: (new label)                  [ * ]
  * ...
  * L2:
+ *
+ *
+ * Decreases size of bytecode
  */
 int simplify_dup_ifeq_ifne(CODE **c) {
   int l1, l2, l3;
@@ -365,7 +409,7 @@ int simplify_dup_ifeq_ifne(CODE **c) {
 
       l3 = next_label();
       l3_code = makeCODElabel(l3, next(next(destination(l1))));
-      INSERTnewlabel(l3, "asdf", l3_code, 1);
+      INSERTnewlabel(l3, "jump_over", l3_code, 1);
       next(destination(l1))->next = l3_code;
 
       if (aeq) {
@@ -382,6 +426,7 @@ int simplify_dup_ifeq_ifne(CODE **c) {
 }
 
 
+/* Checks if an instruction is a "boolean comparison", ie ifeq or ifne */
 int is_boolcmp(CODE *c, int *v, int *l) {
   if (is_ifeq(c, l)) {
     *v = 0;
@@ -393,11 +438,12 @@ int is_boolcmp(CODE *c, int *v, int *l) {
   return 0;
 }
 
+/* Creates a "boolean comparison" instruction */
 CODE *makeCODEboolcmp(int v, int l, CODE *next) {
   if (v == 0) {
     return makeCODEifeq(l, next);
   }
-  if (v == 1) {
+  if (v != 1) {
     return makeCODEifne(l, next);
   }
   return NULL;
@@ -465,6 +511,9 @@ int simplify_iconst_goto_ifeq(CODE **c) {
 }
 
 
+/*
+ * Deletes a label that has reference count zero.
+ */
 int remove_dead_label(CODE **c) {
   int l;
   if (is_label(*c, &l) && deadlabel(l)) {
@@ -874,10 +923,10 @@ int constant_fold(CODE **c) {
   return 0;
 }
 
-/* iconst_0
- * if_icmpeq/if_icmpne L1
+/* iconst_0                     [ 0 ]
+ * if_icmpeq/if_icmpne L1       [ * ]   and go to L1
  * ---------->
- * ifeq/ifne L1
+ * ifeq/ifne L1                 [ * ]   and go to L1
  */
 int simplify_icmp_0(CODE **c) {
   int v;
@@ -892,10 +941,10 @@ int simplify_icmp_0(CODE **c) {
   return 0;
 }
 
-/* aconst_null
- * if_acmpeq/if_acmpne L1
+/* aconst_null                  [null]
+ * if_acmpeq/if_acmpne L1       [ * ]   and go to L1
  * ---------->
- * ifnull/ifnonnull L1
+ * ifnull/ifnonnull L1          [ * ]   and go to L1
  */
 int simplify_acmp_null(CODE **c) {
   int l;
@@ -922,13 +971,16 @@ int is_pure_expression_instruction(CODE *c) {
       is_aload(c, &d) || is_iload(c, &d));
 }
 
-/* ldc/load #1
- * ldc/load #2
- * swp
+/* pure_expression_instruction #1       [ a * ]
+ * pure_expression_instruction #2       [ a b ]
+ * swp                                  [ b a ]
  * ---------->
- * #2
- * #1
- * swp
+ * pure_expression_instruction #2       [ b * ]
+ * pure_expression_instruction #1       [ a b ]
+ *
+ * We remove the swap by swapping the instructions. It is safe because the
+ * instructions have no side-effects other than adding a single value onto the
+ * stack
  */
 int basic_unswap(CODE **c) {
   CODE *c1;
@@ -978,7 +1030,8 @@ int check_no_loads(CODE *c, int k, int *count) {
 /* 
  * If the current operation is a store, it searches through a fixed set of
  * paths to see if it is ever loaded. If all the branches terminate or have the
- * variable stored again, then we know the current load will never be used.
+ * variable stored again, then we know the current load will never be used. It
+ * is then safe to remove the store.
  */
 int remove_dead_store(CODE **c) {
   int k;
@@ -990,12 +1043,14 @@ int remove_dead_store(CODE **c) {
   return 0;
 }
 
-/* ldc "asdfasdf"
- * dup
- * ifnonnull L1
+/* ldc "some litteral"  [ s * ]
+ * dup                  [ s s ]
+ * ifnonnull L1         [ s * ] and goes to L1
  * ---------->
- * ldc "asdfasdf"
- * goto L1
+ * ldc "some litteral"  [ s * ]
+ * goto L1              [ s * ] and goes to L1
+ *
+ * We are allowed to ignore the null check because a string literal is not null.
  */
 
 int simplify_ldc_string_ifnonnull(CODE **c) {
@@ -1007,12 +1062,18 @@ int simplify_ldc_string_ifnonnull(CODE **c) {
   return 0;
 }
 
-/* invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;
- * dup
- * ifnonnull L1
+/* [before]         [ s1 s2 ]
+ * invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;      [ s3 * ]
+ * dup              [ s3 s3 ]
+ * ifnonnull L1     [ s3 *  ]   and go to label L1
  * ---------->
- * invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;
- * goto L1
+ * [before]         [ s1 s2 ]
+ * invokevirtual java/lang/String/concat(Ljava/lang/String;)Ljava/lang/String;      [ s3 *] 
+ * goto L1          [ s3 *  ]   and go to label L1   
+ *
+ * Here we assume that a string concatenation will never return a null.
+ * Even if its arguments are null, it will not return a null but throw an exception instead
+ *
  */
 
 int simplify_concat_string_ifnonnull(CODE **c) {
@@ -1031,6 +1092,7 @@ int simplify_concat_string_ifnonnull(CODE **c) {
  * L1:
  * ---------->
  * L1: (reference count reduced by 1)
+ *
  */
 int remove_unnecessary_goto(CODE **c) {
   int l1, l2;
@@ -1041,10 +1103,14 @@ int remove_unnecessary_goto(CODE **c) {
 }
 
 
-/* pure_expression_instruction
- * pop
+/* pure_expression_instruction      [ a ]
+ * pop                              [ * ]
  * ---------->
- * [nothing]
+ * [nothing]                        [ * ]
+ *
+ *  
+ *
+ * TODO: Might want to replace this by a NOP
  */
 int basic_expression_pop(CODE **c) {
   if (is_pure_expression_instruction(*c) &&
@@ -1084,40 +1150,48 @@ int instructions_equal(CODE *a, CODE *b) {
     check_and_compare(is_idiv, a, b) ||
     check_and_compare(is_iadd, a, b) ||
     check_and_compare(is_ireturn, a, b) ||
+    /*
     check_and_compare(is_areturn, a, b) ||
+    */
     check_and_compare(is_return, a, b) ||
     check_and_compare(is_dup, a, b) ||
+    /*
     check_and_compare(is_pop, a, b) ||
+    */
     check_and_compare(is_swap, a, b) ||
 
     check_and_compare_int(is_label, a, b) ||
     check_and_compare_int(is_goto, a, b) ||
     check_and_compare_int(is_ifeq, a, b) ||
     check_and_compare_int(is_ifne, a, b) ||
+    /*
     check_and_compare_int(is_if_acmpeq, a, b) ||
     check_and_compare_int(is_if_acmpne, a, b) ||
     check_and_compare_int(is_ifnull, a, b) ||
     check_and_compare_int(is_ifnonnull, a, b) ||
+    */
     check_and_compare_int(is_if_icmpeq, a, b) ||
     check_and_compare_int(is_if_icmpgt, a, b) ||
     check_and_compare_int(is_if_icmplt, a, b) ||
     check_and_compare_int(is_if_icmple, a, b) ||
     check_and_compare_int(is_if_icmpge, a, b) ||
     check_and_compare_int(is_if_icmpne, a, b) ||
+    /*
     check_and_compare_int(is_aload, a, b) ||
     check_and_compare_int(is_astore, a, b) ||
+    */
     check_and_compare_int(is_iload, a, b) ||
     check_and_compare_int(is_istore, a, b) ||
     check_and_compare_int(is_ldc_int, a, b) ||
 
-    check_and_compare_string(is_new, a, b) ||
-    check_and_compare_string(is_instanceof, a, b) ||
-    check_and_compare_string(is_checkcast, a, b) ||
+    /*check_and_compare_string(is_new, a, b) ||*/
     check_and_compare_string(is_ldc_string, a, b) ||
+    /*
     check_and_compare_string(is_getfield, a, b) ||
     check_and_compare_string(is_putfield, a, b) ||
     check_and_compare_string(is_invokevirtual, a, b) ||
     check_and_compare_string(is_invokenonvirtual, a, b) ||
+    */
 
     (is_iinc(a, &xa, &ya) && is_iinc(b, &xb, &yb) && xa==ya && xb==yb)
     ;
@@ -1125,26 +1199,41 @@ int instructions_equal(CODE *a, CODE *b) {
 
 
 /*
-/// XXX: this is not sound.
-/// The main reason it is not sound is that a single JVM instruction can be
-/// executed on different possible types. Because of that, merging two branches
-/// might make the JVM verification fail.
-
- * instruction
- * goto L1
+ * instruction A        
+ * goto L1              
  * ...
- * same instruction
- * goto L1 / L1:
+ * instruction A        
+ * goto L1 / L1:         (Either a goto to L1 or the label L1 itself)
  * ...
- * L1:
+ * L1:                  
  * --------->
- * goto L3
+ *
+ * goto L3              
  * ...
- * L3:(new label)
- * same instruction
+ * L3:(new label)       
+ * instruction A
  * goto L1 / L1:
  * ...
  * L1 (reference count reduced by 1)
+ *
+ *
+ * If we assume that the JVM does not verify code but otherwise executes every
+ * instruction as it claims, then this would be sound since exactly the same
+ * instructions would be executed in both cases.
+ *
+ * However, we must also pass JVM verification, which checks that the stack
+ * values have the same types on branch merge. This is problematic because
+ * there are JVM instructions that can operate on different types. For example,
+ * if in one branch we pop an object of class A and in another branch we pop an object
+ * of class B, if we factor out the pop instruction, we will not pass
+ * verification because stack types will not match.
+ *
+ * Because of thi
+ *
+ *
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 int factor_instruction(CODE **c) {
   CODE *p, *prev;
@@ -1159,7 +1248,6 @@ int factor_instruction(CODE **c) {
     while(p!=NULL) {
       if (instructions_equal(*c, p) &&
           (is_goto(next(p), &l2) || is_label(next(p),&l2)) && l1==l2 ) {
-        printf("%d %d \n",l1,l2);
         l3 = next_label();
         l3_code = makeCODElabel(l3, p);
         prev->next = l3_code;
@@ -1177,7 +1265,7 @@ int factor_instruction(CODE **c) {
 
 
 void init_patterns(void) {
-  /*ADD_PATTERN(constant_fold);*/
+  ADD_PATTERN(constant_fold);
   ADD_PATTERN(goto_return);
   ADD_PATTERN(invert_comparison);
 	ADD_PATTERN(simplify_dup_xxx_pop);
@@ -1210,5 +1298,5 @@ void init_patterns(void) {
   ADD_PATTERN(negative_increment);
 	ADD_PATTERN(simplify_aload_astore);
 	ADD_PATTERN(simplify_iload_istore);
-	/*ADD_PATTERN(factor_instruction);*/
+	ADD_PATTERN(factor_instruction);
 }
