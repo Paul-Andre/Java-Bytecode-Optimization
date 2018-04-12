@@ -36,11 +36,15 @@ int simplify_multiplication_right(CODE **c)
   return 0;
 }
 
-/* dup
- * astore x
- * pop
+/* [before]         [ a * ]
+ * dup              [ a a ]
+ * astore x         [ a * ]     a is stored at x
+ * pop              [ * * ]
  * -------->
- * astore x
+ * [before]         [ a * ]
+ * astore x         [ * * ]     a is stored at x
+ */
+/* Duplicated value is unchanged by popped later on
  */
 int simplify_astore(CODE **c)
 { int x;
@@ -52,10 +56,14 @@ int simplify_astore(CODE **c)
   return 0;
 }
 
-/* dup
- * pop
+/* [before]         [ a * ]
+ * dup              [ a a ]
+ * pop              [ a * ]
  * -------->
- * [nothing]
+ * [before]         [ a * ]
+ * [nothing]        [ a * ]
+ */
+/* Duplicated value is popped right away
  */
 int dup_pop(CODE **c)
 {
@@ -66,14 +74,17 @@ int dup_pop(CODE **c)
   return 0;
 }
 
-/* ldc k   (0<=k<=127)
- * iadd
- * istore x
+/* [before]                 [ a * ]
+ * ldc k   (0<=k<=127)      [ a   k ]1-2
+ * iadd                     [ a+k * ]1
+ * istore x                 [ *   * ]1-2     a+k is stored at x
  * --------->
- * istore x
- * iinc x k
+ * [before]                 [ a * ]
+ * istore x                 [ * * ]1-2       a is stored at x
+ * iinc x k                 [ * * ]3       a+k is stored at x
  */ 
-/* XXX: this version can possibly increase code size */
+/* XXX: this version can possibly increase code size in terms of actual bytecode size */
+/*
 int positive_increment(CODE **c)
 { int x,k;
   if (is_ldc_int(*c,&k) &&
@@ -81,6 +92,21 @@ int positive_increment(CODE **c)
       is_istore(next(next(*c)),&x) &&
       0<=k && k<=127) {
      return replace(c,3,makeCODEistore(x,makeCODEiinc(x,k,NULL)));
+  }
+  return 0;
+}
+*/
+
+/* template version (turns out to be better)
+ */
+int positive_increment(CODE **c)
+{ int x,y,k;
+  if (is_iload(*c,&x) &&
+      is_ldc_int(next(*c),&k) &&
+      is_iadd(next(next(*c))) &&
+      is_istore(next(next(next(*c))),&y) &&
+      x==y && 0<=k && k<=127) {
+     return replace(c,4,makeCODEiinc(x,k,NULL));
   }
   return 0;
 }
@@ -93,6 +119,7 @@ int positive_increment(CODE **c)
  * iinc x -k
  */ 
 /* XXX: this version can possibly increase code size */
+/*
 int negative_increment(CODE **c)
 { int x,k;
   if (is_ldc_int(*c,&k) &&
@@ -103,6 +130,30 @@ int negative_increment(CODE **c)
   }
   return 0;
 }
+*/
+/* template version 
+ */
+/* [before]     [ *   * ]     a is at location x
+ * iload x      [ a   * ]
+ * ldc k        [ a   k ]
+ * isub         [ a-k * ]
+ * istore x     [ *   * ]       a-k stored at x
+ * --------->
+ * [before]     [ *   * ]
+ * iinc x -k    [ *   * ]       a-k stored at x
+ */
+int negative_increment(CODE **c)
+{ int x,y,k;
+  if (is_iload(*c,&x) &&
+      is_ldc_int(next(*c),&k) &&
+      is_isub(next(next(*c))) &&
+      is_istore(next(next(next(*c))),&y) &&
+      x==y && 0<=k && k<=127) {
+     return replace(c,4,makeCODEiinc(x,-k,NULL));
+  }
+  return 0;
+}
+
 
 /* goto/cmp L1
  * ...
