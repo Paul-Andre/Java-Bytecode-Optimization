@@ -115,3 +115,4 @@ fi
 
 echo -e "\e[42m\033[1mNormal:\033[0m\e[42m $NORMAL\e[49m"
 echo -e "\e[42m\033[1mOptimized:\033[0m\e[42m $OPT\e[49m"
+echo -e "\e[42m\033[1mRatio:\033[0m\e[42m "$(echo "scale=4; 100 - 100 * ( $OPT / $NORMAL ) " | bc)"\e[49m"
