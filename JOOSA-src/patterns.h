@@ -1312,8 +1312,8 @@ void init_patterns(void) {
   ADD_PATTERN(invert_comparison);
 	ADD_PATTERN(simplify_dup_xxx_pop);
 	ADD_PATTERN(simplify_member_store);
-/*	ADD_PATTERN(simplify_astore_aload);*/
-/*	ADD_PATTERN(simplify_istore_iload);*/
+	ADD_PATTERN(simplify_astore_aload);
+	ADD_PATTERN(simplify_istore_iload);
 	ADD_PATTERN(simplify_multiplication_right);
 	ADD_PATTERN(positive_increment);
   ADD_PATTERN(simplify_iconst_0_goto_ifeq);
