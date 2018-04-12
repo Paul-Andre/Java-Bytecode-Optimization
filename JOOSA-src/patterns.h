@@ -10,6 +10,14 @@
  * email: hendren@cs.mcgill.ca, mis@brics.dk
  */
 
+
+/* Every instruction of ours improves at least one of the following things:
+ *
+ * Byte code size
+ * Number of jumps to gotos
+ *
+ */
+
 int set_label(CODE *c, int l);
 
 /* iload x        iload x        iload x
@@ -814,10 +822,10 @@ int constant_fold(CODE **c) {
   return 0;
 }
 
-/* iconst_0
- * if_icmpeq/if_icmpne L1
+/* iconst_0                     [ 0 ]
+ * if_icmpeq/if_icmpne L1       [ * ]   and go to L1
  * ---------->
- * ifeq/ifne L1
+ * ifeq/ifne L1                 [ * ]   and go to L1
  */
 int simplify_icmp_0(CODE **c) {
   int v;
@@ -832,10 +840,10 @@ int simplify_icmp_0(CODE **c) {
   return 0;
 }
 
-/* aconst_null
- * if_acmpeq/if_acmpne L1
+/* aconst_null                  [null]
+ * if_acmpeq/if_acmpne L1       [ * ]   and go to L1
  * ---------->
- * ifnull/ifnonnull L1
+ * ifnull/ifnonnull L1          [ * ]   and go to L1
  */
 int simplify_acmp_null(CODE **c) {
   int l;
@@ -862,13 +870,16 @@ int is_pure_expression_instruction(CODE *c) {
       is_aload(c, &d) || is_iload(c, &d));
 }
 
-/* ldc/load #1
- * ldc/load #2
- * swp
+/* pure_expression_instruction #1       [ a * ]
+ * pure_expression_instruction #2       [ a b ]
+ * swp                                  [ b a ]
  * ---------->
- * #2
- * #1
- * swp
+ * pure_expression_instruction #2       [ b * ]
+ * pure_expression_instruction #1       [ a b ]
+ *
+ * We remove the swap by swapping the instructions. It is safe because the
+ * instructions have no side-effects other than adding a single value onto the
+ * stack
  */
 int basic_unswap(CODE **c) {
   CODE *c1;
@@ -918,7 +929,8 @@ int check_no_loads(CODE *c, int k, int *count) {
 /* 
  * If the current operation is a store, it searches through a fixed set of
  * paths to see if it is ever loaded. If all the branches terminate or have the
- * variable stored again, then we know the current load will never be used.
+ * variable stored again, then we know the current load will never be used. It
+ * is then safe to remove the store.
  */
 int remove_dead_store(CODE **c) {
   int k;
@@ -979,6 +991,7 @@ int simplify_concat_string_ifnonnull(CODE **c) {
  * L1:
  * ---------->
  * L1: (reference count reduced by 1)
+ *
  */
 int remove_unnecessary_goto(CODE **c) {
   int l1, l2;
@@ -989,10 +1002,14 @@ int remove_unnecessary_goto(CODE **c) {
 }
 
 
-/* pure_expression_instruction
- * pop
+/* pure_expression_instruction      [ a ]
+ * pop                              [ * ]
  * ---------->
- * [nothing]
+ * [nothing]                        [ * ]
+ *
+ *  
+ *
+ * TODO: Might want to replace this by a NOP
  */
 int basic_expression_pop(CODE **c) {
   if (is_pure_expression_instruction(*c) &&
@@ -1032,40 +1049,48 @@ int instructions_equal(CODE *a, CODE *b) {
     check_and_compare(is_idiv, a, b) ||
     check_and_compare(is_iadd, a, b) ||
     check_and_compare(is_ireturn, a, b) ||
+    /*
     check_and_compare(is_areturn, a, b) ||
+    */
     check_and_compare(is_return, a, b) ||
     check_and_compare(is_dup, a, b) ||
+    /*
     check_and_compare(is_pop, a, b) ||
+    */
     check_and_compare(is_swap, a, b) ||
 
     check_and_compare_int(is_label, a, b) ||
     check_and_compare_int(is_goto, a, b) ||
     check_and_compare_int(is_ifeq, a, b) ||
     check_and_compare_int(is_ifne, a, b) ||
+    /*
     check_and_compare_int(is_if_acmpeq, a, b) ||
     check_and_compare_int(is_if_acmpne, a, b) ||
     check_and_compare_int(is_ifnull, a, b) ||
     check_and_compare_int(is_ifnonnull, a, b) ||
+    */
     check_and_compare_int(is_if_icmpeq, a, b) ||
     check_and_compare_int(is_if_icmpgt, a, b) ||
     check_and_compare_int(is_if_icmplt, a, b) ||
     check_and_compare_int(is_if_icmple, a, b) ||
     check_and_compare_int(is_if_icmpge, a, b) ||
     check_and_compare_int(is_if_icmpne, a, b) ||
+    /*
     check_and_compare_int(is_aload, a, b) ||
     check_and_compare_int(is_astore, a, b) ||
+    */
     check_and_compare_int(is_iload, a, b) ||
     check_and_compare_int(is_istore, a, b) ||
     check_and_compare_int(is_ldc_int, a, b) ||
 
-    check_and_compare_string(is_new, a, b) ||
-    check_and_compare_string(is_instanceof, a, b) ||
-    check_and_compare_string(is_checkcast, a, b) ||
+    /*check_and_compare_string(is_new, a, b) ||*/
     check_and_compare_string(is_ldc_string, a, b) ||
+    /*
     check_and_compare_string(is_getfield, a, b) ||
     check_and_compare_string(is_putfield, a, b) ||
     check_and_compare_string(is_invokevirtual, a, b) ||
     check_and_compare_string(is_invokenonvirtual, a, b) ||
+    */
 
     (is_iinc(a, &xa, &ya) && is_iinc(b, &xb, &yb) && xa==ya && xb==yb)
     ;
@@ -1158,5 +1183,5 @@ void init_patterns(void) {
   ADD_PATTERN(negative_increment);
 	ADD_PATTERN(simplify_aload_astore);
 	ADD_PATTERN(simplify_iload_istore);
-	/*ADD_PATTERN(factor_instruction);*/
+	ADD_PATTERN(factor_instruction);
 }
