@@ -626,7 +626,7 @@ int fuse_labels(CODE **c) {
  * ...
  * L:
  * --------->
- * [nothing]
+ * nop
  * ...
  * L: (reference counter reduced by 1)
  */
@@ -710,7 +710,7 @@ int simplify_member_store(CODE **c) {
  * dup
  * pop
  * --------->
- * [nothing]
+ * nop
  */
 int remove_dup_pop(CODE **c) {
   if (is_dup(*c) && is_pop(next(*c))) {
@@ -754,7 +754,7 @@ int simplify_istore_iload(CODE **c) {
 /* aload k
  * astore k
  * ---------->
- * [nothing]
+ * nop
  */
 int simplify_aload_astore(CODE **c) {
   int a, b;
@@ -767,7 +767,7 @@ int simplify_aload_astore(CODE **c) {
 /* iload k
  * istore k
  * ---------->
- * [nothing]
+ * nop
  */
 int simplify_iload_istore(CODE **c) {
   int a, b;
@@ -1117,7 +1117,7 @@ int remove_unnecessary_goto(CODE **c) {
 /* pure_expression_instruction      [ a ]
  * pop                              [ * ]
  * ---------->
- * [nothing]                        [ * ]
+ * nop                              [ * ]
  *
  *  
  *
