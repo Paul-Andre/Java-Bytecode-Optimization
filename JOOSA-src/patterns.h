@@ -165,15 +165,16 @@ int negative_increment(CODE **c)
  * --------->
  * goto/cmp L2
  * ...
- * L1:    (reference count reduced by 1)
- * goto L2
+ * L1:    (reference count reduced by 1)|not visited anymore
+ * goto L2                              |not visited anymore
  * ...
  * L2:    (reference count increased by 1)  
  * [not goto]
  *
- *
+ * We go to L1, then directly to L2. So it is safe to go directly to L2.
  * The not goto at the end is required to ensure termination in a case of
  * cyclical gotos
+ * It decreases the number of jumps towards a goto
  */
 int simplify_goto_goto(CODE **c)
 { int l1,l2;
@@ -192,20 +193,26 @@ int simplify_goto_goto(CODE **c)
 
 
 /*
- * iconst_0
- * goto L1
+ * iconst_0         [ 0 ]
+ * goto L1          [ 0 ]
  * ...
- * L1:
- * ifeq L2
+ * L1:              [ 0 ]
+ * ifeq L2          [ * ]   Jump to L2
  * ...
- * L2:
+ * L2:              [ * ]
  * --------->
- * goto L2
+ * goto L2          [ * ]
  * ...
- * L1: (reference count reduced by 1)
- * ifeq L2
+ * L1:                      (reference count reduced by 1) |not visited anymore
+ * ifeq L2                                                 |not visited anymore
  * ...
- * L2: (reference count increased by 1)
+ * L2:              [ * ]   (reference count increased by 1)
+ *
+ * 
+ * When we reach the L1 label, 0 is on the stack, so we will always jump to L2.
+ * It is safe to jump to L2 directly
+ * - Decreases the number of jumps towards a goto
+ * - Reduces instruction count
  */
 int simplify_iconst_0_goto_ifeq(CODE **c) {
   int v;
@@ -221,23 +228,25 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
 }
 
 /*
- * iconst_0
- * goto L1
+ * iconst_0         [ 0 * ]
+ * goto L1          [ 0 * ]
  * ...
- * L1:
- * dup
- * ifeq L2
+ * L1:              [ 0 * ]
+ * dup              [ 0 0 ]
+ * ifeq L2          [ 0 * ]     Jump to L2
  * ...
- * L2:
+ * L2:              [ 0 * ]
  * --------->
- * iconst 0
- * goto L2
+ * iconst 0         [ 0 * ]
+ * goto L2          [ 0 * ]
  * ...
- * L1: (reference count reduced by 1)
- * dup
- * ifeq L2
+ * L1:                          (reference count reduced by 1)|not visited anymore
+ * dup                                                        |not visited anymore
+ * ifeq L2                                                    |not visited anymore
  * ...
- * L2: (reference count increased by 1)
+ * L2:              [ 0 * ]     (reference count increased by 1)
+ *
+ *
  */
 int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
   int v;
