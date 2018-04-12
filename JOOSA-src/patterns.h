@@ -11,16 +11,21 @@
  */
 
 
-/* Every pattern improves at least one of the following things, with the first
- * thing being of the highest priority
+/* Every pattern lexicographically reduces the tuple consisting of the
+ * following things: (in decreasing order of priority)
  *
  * Byte code size
- * Number of jumps to goto, number of jumps to dup, Number of labels
+ * Number of jumps to a [goto] or a [dup; ifeq] sequence
  * Number of multiplication
+ * Number of labels
+ * Number of jumps that don't use the lowest label when an instruction has multiple labels
  *
- *
- * TODO: if relevant, indicate in what order
  */
+
+int is_goto_or_dup_ifeq(CODE *c) {
+    int dummy;
+    return is_goto(c, &dummy) || (is_dup(c) && is_ifeq(next(c), &dummy));
+}
 
 int set_label(CODE *c, int l);
 
@@ -186,7 +191,7 @@ int negative_increment(CODE **c)
  * goto L2
  * ...
  * L2:
- * [not goto]
+ * [not goto or dup;ifeq sequence]
  * --------->
  * goto/cmp L2
  * ...
@@ -194,22 +199,23 @@ int negative_increment(CODE **c)
  * goto L2                              |not visited anymore
  * ...
  * L2:    (reference count increased by 1)  
- * [not goto]
+ * [not goto or dup;ifeq sequence]
  *
  * We go to L1, then directly to L2. So it is safe to go directly to L2.
  * The not goto at the end is required to ensure termination in a case of
  * cyclical gotos
  *
+ * TODO: might end up cycling
+ *
  * Improvements: 
- *  - Decreases the number of jumps towards a goto
  *  - Keeps bytecode size the same
+ *  - Decreases the number of jumps towards a goto
  */
 int simplify_goto_goto(CODE **c)
 { int l1,l2;
-  int dummy;
   if (uses_label(*c,&l1) &&
       is_goto(next(destination(l1)),&l2) &&
-      !is_goto(next(destination(l2)),&dummy)) {
+      !is_goto_or_dup_ifeq(next(destination(l2)))) {
      droplabel(l1);
      copylabel(l2);
      set_label(*c,l2);
@@ -241,7 +247,6 @@ int simplify_goto_goto(CODE **c)
  * It is safe to jump to L2 directly
  *
  * Improvements: 
- *  - Decreases the number of jumps towards a goto
  *  - Reduces becode size
  */
 int simplify_iconst_0_goto_ifeq(CODE **c) {
@@ -266,8 +271,7 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
  * ifeq L2          [ 0 * ]     Jump to L2
  * ...
  * L2:              [ 0 * ]
- * [not dup]
- * [not ifeq]
+ * [not goto or dup;ifeq sequence]
  * --------->
  * iconst 0         [ 0 * ]
  * goto L2          [ 0 * ]
@@ -277,10 +281,11 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
  * ifeq L2                                                    |not visited anymore
  * ...
  * L2:              [ 0 * ]     (reference count increased by 1)
- * [not dup]
- * [not ifeq]
+ * [not goto or dup;ifeq sequence]
  *
- * and [not goto]
+ *
+ * Improvement:
+ *      decreases the number of jumps to [goto] or [dup; ifeq] while keeping bytecode count the same
  *
  */
 int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
@@ -289,7 +294,8 @@ int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
   if (is_ldc_int(*c,&v) && v==0 &&
       is_goto(next(*c),&l1) &&
       is_dup(next(destination(l1))) &&
-      is_ifeq(next(next(destination(l1))),&l2)
+      is_ifeq(next(next(destination(l1))),&l2) &&
+      !is_goto_or_dup_ifeq(destination(l2))
       ) {
     droplabel(l1);
     copylabel(l2);
