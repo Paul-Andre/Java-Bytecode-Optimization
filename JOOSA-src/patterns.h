@@ -61,7 +61,7 @@ int simplify_multiplication_right(CODE **c)
  * astore x         [ * * ]     a is stored at x
  *
  *
- * Duplicated value is unchanged by popped later on
+ * Duplicated value is unused and popped later on
  *
  * Improvement:
  *      Reduces bytecode size.
@@ -199,7 +199,10 @@ int negative_increment(CODE **c)
  * We go to L1, then directly to L2. So it is safe to go directly to L2.
  * The not goto at the end is required to ensure termination in a case of
  * cyclical gotos
- * It decreases the number of jumps towards a goto
+ *
+ * Improvements: 
+ *  - Decreases the number of jumps towards a goto
+ *  - Keeps bytecode size the same
  */
 int simplify_goto_goto(CODE **c)
 { int l1,l2;
@@ -236,8 +239,10 @@ int simplify_goto_goto(CODE **c)
  * 
  * When we reach the L1 label, 0 is on the stack, so we will always jump to L2.
  * It is safe to jump to L2 directly
- * - Decreases the number of jumps towards a goto
- * - Reduces instruction count
+ *
+ * Improvements: 
+ *  - Decreases the number of jumps towards a goto
+ *  - Reduces becode size
  */
 int simplify_iconst_0_goto_ifeq(CODE **c) {
   int v;
@@ -261,6 +266,8 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
  * ifeq L2          [ 0 * ]     Jump to L2
  * ...
  * L2:              [ 0 * ]
+ * [not dup]
+ * [not ifeq]
  * --------->
  * iconst 0         [ 0 * ]
  * goto L2          [ 0 * ]
@@ -270,8 +277,11 @@ int simplify_iconst_0_goto_ifeq(CODE **c) {
  * ifeq L2                                                    |not visited anymore
  * ...
  * L2:              [ 0 * ]     (reference count increased by 1)
+ * [not dup]
+ * [not ifeq]
  *
- * TODO: might not teminate
+ * and [not goto]
+ *
  */
 int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
   int v;
@@ -288,14 +298,14 @@ int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
   return 0;
 }
 
-/* iconst v (v != 0)        [ v ]
+/* iconst v (v != 0)        [ v * ]
  * dup                      [ v v ]
  * ifeq L1                  [ v * ]     Never jumps since v!=0
- * pop                      [ * ]
+ * pop                      [ * * ]
  * ...
  * L1:                                  | Not visited anymore in the context of the current pattern
  * ---------->
- * [nothing]                [*]
+ * [nothing]                [ * * ]
  * ...
  * L1: (reference count reduced by 1)
  *
@@ -318,10 +328,10 @@ int simplify_iconst_1_dup_ifeq_pop(CODE **c) {
 
 
 /*
- *  [before]                        [ a ]
+ *  [before]                        [ a * ]
  * dup                              [ a a ]
  * ifeq/ifne L1                     [ a * ]     Possibly going to L1
- * pop                              [ * ]
+ * pop                              [ * * ]
  * ...
  * L1:                              [ a * ]  
  * ifeq/ifne L2 (same check)        [ * * ]     If this is exactly the same check the outcome will be the same when applied to a.
@@ -584,6 +594,8 @@ int set_label(CODE *c, int l) {
  * ...
  * L1: (reference count reduced by 1)
  * L2: (reference count increased by 1)
+ *
+ *
  */
 int fuse_labels(CODE **c) {
   int l1, l2;
