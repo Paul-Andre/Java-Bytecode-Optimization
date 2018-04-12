@@ -44,7 +44,7 @@ int simplify_multiplication_right(CODE **c)
  * [before]         [ a * ]
  * astore x         [ * * ]     a is stored at x
  */
-/* Duplicated value is unchanged by popped later on
+/* Duplicated value is unused and popped later on
  */
 int simplify_astore(CODE **c)
 { int x;
