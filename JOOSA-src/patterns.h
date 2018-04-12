@@ -1137,7 +1137,7 @@ int check_and_compare_string(int f(CODE *,char **), CODE *a, CODE *b) {
 }
 
 /* This is horrible. I was probably tired when I did this */
-int instructions_equal(CODE *a, CODE *b) {
+int instructions_equal_and_safe_to_factor(CODE *a, CODE *b) {
   int xa,ya,xb,yb;
   if (a->kind != b->kind) return 0;
   return 
@@ -1228,7 +1228,7 @@ int instructions_equal(CODE *a, CODE *b) {
  * of class B, if we factor out the pop instruction, we will not pass
  * verification because stack types will not match.
  *
- * Because of thi
+ * Because of this I only factor instructions that consume 
  *
  *
  *
@@ -1246,7 +1246,7 @@ int factor_instruction(CODE **c) {
     prev = next(*c);
     p = next(next(*c));
     while(p!=NULL) {
-      if (instructions_equal(*c, p) &&
+      if (instructions_equal_and_safe_to_factor(*c, p) &&
           (is_goto(next(p), &l2) || is_label(next(p),&l2)) && l1==l2 ) {
         l3 = next_label();
         l3_code = makeCODElabel(l3, p);
