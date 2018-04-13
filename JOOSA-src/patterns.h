@@ -966,6 +966,8 @@ int invert_comparison(CODE **c) {
  * ..
  * L1:  (ref count --)
  *
+ * Since the return will be called after the goto, we can call it right away.
+ *
  * Improvement:
  *      Reduces bytecode size
  *
@@ -980,6 +982,20 @@ int goto_return(CODE **c) {
   return 0;
 }
 
+/*
+ * goto L1 
+ * [not label]
+ * ...
+ * --------->
+ * goto L1 
+ * ...
+ *
+ * Since there is a goto before the instruction, it will never be called.
+ *
+ * Improvement:
+ *      Reduces bytecode size
+ *
+ */
 int remove_instruction_after_goto(CODE **c) {
   int l;
   int dummy;
@@ -991,6 +1007,20 @@ int remove_instruction_after_goto(CODE **c) {
   return 0;
 }
 
+/*
+ * return/areturn/iremCK
+ * [not label]
+ * ...
+ * --------->
+ * return/areturn/iremCK
+ * ...
+ *
+ * Since there is a return before the instruction, it will never be called.
+ *
+ * Improvement:
+ *      Reduces bytecode size
+ *
+ */
 int remove_instruction_after_return(CODE **c) {
   int dummy;
   if ((is_areturn(*c) || is_ireturn(*c) || is_return(*c)) &&
@@ -1002,17 +1032,6 @@ int remove_instruction_after_return(CODE **c) {
   return 0;
 }
 
-int constant_fold(CODE **c) {
-  int a, b;
-  if (is_ldc_int(*c, &a) && is_ldc_int(next(*c), &b)) {
-    if (is_iadd(next(next(*c)))) {
-      return replace(c, 3, makeCODEldc_int(a+b, NULL));
-    } else if (is_imul(next(next(*c)))) {
-      return replace(c, 3, makeCODEldc_int(a*b, NULL));
-    }
-  }
-  return 0;
-}
 
 /* iconst_0                     [ 0 ]
  * if_icmpeq/if_icmpne L1       [ * ]   and go to L1
@@ -1119,6 +1138,8 @@ int check_no_loads(CODE *c, int k, int *count) {
 }
 
 /* 
+ * istore/astoke/iinc  k
+ *
  * If the current operation is a store, it searches through a fixed set of
  * paths to see if it is ever loaded. If all the branches terminate or have the
  * variable stored again, then we know the current load will never be used. It
@@ -1126,8 +1147,9 @@ int check_no_loads(CODE *c, int k, int *count) {
  */
 int remove_dead_store(CODE **c) {
   int k;
+  int d; /* dummy */
   int instruction_count = N_LOOKAHEAD;
-  if ((is_istore(*c, &k) || is_astore(*c, &k))
+  if ((is_istore(*c, &k) || is_astore(*c, &k) || is_iinc(*c, &k, &d))
       && check_no_loads(next(*c), k, &instruction_count)) {
     return replace(c, 1, makeCODEpop(NULL));
   }
@@ -1163,7 +1185,9 @@ int simplify_ldc_string_ifnonnull(CODE **c) {
  * goto L1          [ s3 *  ]   and go to label L1   
  *
  * Here we assume that a string concatenation will never return a null.
- * Even if its arguments are null, it will not return a null but throw an exception instead
+ * Even if its arguments are null, it will not return a null but throw an exception instead.
+ *
+ *
  *
  */
 
@@ -1199,7 +1223,6 @@ int remove_unnecessary_goto(CODE **c) {
  * ---------->
  * nop                              [ * ]
  *
- *  
  *
  */
 int basic_expression_pop(CODE **c) {
@@ -1212,21 +1235,26 @@ int basic_expression_pop(CODE **c) {
 
 
 
+/* Helper functions to check if two instructions are of a certain kind and are the same:
+*/
 int check_and_compare(int f(CODE *), CODE *a, CODE *b) {
   return (f(a) && f(b));
 }
-
 int check_and_compare_int(int f(CODE *,int *), CODE *a, CODE *b) {
   int x, y;
   return (f(a, &x) && f(b, &y) && x==y);
 }
-
 int check_and_compare_string(int f(CODE *,char **), CODE *a, CODE *b) {
   char *x, *y;
   return (f(a, &x) && f(b, &y) && strcmp(x, y)==0 );
 }
 
-/* This is horrible. I was probably tired when I did this */
+/* Instructions that we beleive are safe to factor
+ *  - Those that only consume integers
+ *  - Those that the comsume values of types that are put back on the stack
+ *  - Accessing locals
+ *
+ */
 int instructions_equal_and_safe_to_factor(CODE *a, CODE *b) {
   int xa,ya,xb,yb;
   if (a->kind != b->kind) return 0;
@@ -1240,50 +1268,43 @@ int instructions_equal_and_safe_to_factor(CODE *a, CODE *b) {
     check_and_compare(is_idiv, a, b) ||
     check_and_compare(is_iadd, a, b) ||
     check_and_compare(is_ireturn, a, b) ||
-    /*
-    check_and_compare(is_areturn, a, b) ||
-    */
     check_and_compare(is_return, a, b) ||
     check_and_compare(is_dup, a, b) ||
-    /*
-    check_and_compare(is_pop, a, b) ||
-    */
     check_and_compare(is_swap, a, b) ||
 
-    check_and_compare_int(is_label, a, b) ||
-    check_and_compare_int(is_goto, a, b) ||
     check_and_compare_int(is_ifeq, a, b) ||
     check_and_compare_int(is_ifne, a, b) ||
-    /*
-    check_and_compare_int(is_if_acmpeq, a, b) ||
-    check_and_compare_int(is_if_acmpne, a, b) ||
-    check_and_compare_int(is_ifnull, a, b) ||
-    check_and_compare_int(is_ifnonnull, a, b) ||
-    */
+
     check_and_compare_int(is_if_icmpeq, a, b) ||
     check_and_compare_int(is_if_icmpgt, a, b) ||
     check_and_compare_int(is_if_icmplt, a, b) ||
     check_and_compare_int(is_if_icmple, a, b) ||
     check_and_compare_int(is_if_icmpge, a, b) ||
     check_and_compare_int(is_if_icmpne, a, b) ||
-    /*
+    
     check_and_compare_int(is_aload, a, b) ||
     check_and_compare_int(is_astore, a, b) ||
-    */
+    
     check_and_compare_int(is_iload, a, b) ||
     check_and_compare_int(is_istore, a, b) ||
     check_and_compare_int(is_ldc_int, a, b) ||
 
-    /*check_and_compare_string(is_new, a, b) ||*/
     check_and_compare_string(is_ldc_string, a, b) ||
-    /*
-    check_and_compare_string(is_getfield, a, b) ||
-    check_and_compare_string(is_putfield, a, b) ||
-    check_and_compare_string(is_invokevirtual, a, b) ||
-    check_and_compare_string(is_invokenonvirtual, a, b) ||
-    */
 
     (is_iinc(a, &xa, &ya) && is_iinc(b, &xb, &yb) && xa==ya && xb==yb)
+    ;
+}
+
+/* Instructions that we beleive are probably safe to factor are those that concern methods and fields.
+ * Even though the same instruction may be exectuted on different types, we
+ * believe those types are safe to merge from different branches.
+ */
+int instructions_equal_and_probably_safe_to_factor(CODE *a, CODE *b) {
+  if (a->kind != b->kind) return 0;
+  return 
+    check_and_compare_string(is_getfield, a, b) ||
+    check_and_compare_string(is_putfield, a, b) ||
+    check_and_compare_string(is_invokevirtual, a, b)
     ;
 }
 
@@ -1318,16 +1339,14 @@ int instructions_equal_and_safe_to_factor(CODE *a, CODE *b) {
  * of class B, if we factor out the pop instruction, we will not pass
  * verification because stack types will not match.
  *
- * Because of this we only factor instructions that either consume int
- *
- *
+ * We have two variants of this optimization: the non-risky and the risky one.
+ * The only difference between them is the types of instructions they factor.
  *
  * Improvement:
  *      Reduces bytecode size
  */
-int factor_instruction(CODE **c) {
+int factor_instruction_generic(CODE **c, int equal_and_safe(CODE *a, CODE *b)) {
   CODE *p, *prev;
-  /*int count = 64;*/
   int l1, l2, l3;
   CODE *l3_code;
   int d; /*dummy*/
@@ -1336,7 +1355,7 @@ int factor_instruction(CODE **c) {
     prev = next(*c);
     p = next(next(*c));
     while(p!=NULL) {
-      if (instructions_equal_and_safe_to_factor(*c, p) &&
+      if (equal_and_safe(*c, p) &&
           (is_goto(next(p), &l2) || is_label(next(p),&l2)) && l1==l2 ) {
         l3 = next_label();
         l3_code = makeCODElabel(l3, p);
@@ -1352,12 +1371,80 @@ int factor_instruction(CODE **c) {
   return 0;
 }
 
+int factor_instruction(CODE **c) {
+    return factor_instruction_generic(c, instructions_equal_and_safe_to_factor);
+}
+int factor_instruction_risky(CODE **c) {
+    return factor_instruction_generic(c, instructions_equal_and_probably_safe_to_factor);
+}
+
+
+
+/*
+ * instruction A        
+ * L1:
+ * ...
+ * instruction A        
+ * goto L1
+ * ----------->
+ * L3:              (new label)
+ * instruction A        
+ * L1:              (ref count --)
+ * ...
+ * goto L3
+ *
+ * Mostly the sanme as the factor_instruction. similarly it has two variants.
+ */
+int factor_instruction_generic2(CODE **c, int equal_and_safe( CODE *, CODE *)) {
+  CODE *p, *prev;
+  int l1,l2, l3;
+  CODE *l3_code;
+  int d; /*dummy*/
+  if ((!is_label(*c,&d)) &&
+        is_label(next(*c), &l1)){
+
+    prev = next(*c);
+
+    p = next(next(*c));
+
+    while(p!=NULL) {
+      if (equal_and_safe(*c, p) &&
+          is_goto(next(p), &l2) && l1==l2 ) {
+
+          printf("ye\n");
+
+        l3 = next_label();
+        l3_code = makeCODElabel(l3, *c);
+
+        *c = l3_code;
+
+        INSERTnewlabel(l3,"factoring",l3_code,1);
+        droplabel(l1);
+        replace(&(prev->next), 2, makeCODEgoto(l3, NULL));
+        return 1;
+      }
+      prev = p;
+      p = next(p);
+    }
+  }
+  return 0;
+}
+
+int factor_instruction2(CODE **c) {
+    return factor_instruction_generic2(c, instructions_equal_and_safe_to_factor);
+}
+int factor_instruction2_risky(CODE **c) {
+    return factor_instruction_generic2(c, instructions_equal_and_probably_safe_to_factor);
+}
 
 /* 
  * nop
  * [not end of method]
  * --------->
  * [nothing]
+ *
+ *
+ *
  */
 int remove_nop(CODE **c) {
     if (next(*c) != NULL && is_nop(*c)) {
@@ -1404,5 +1491,8 @@ void init_patterns(void) {
 	ADD_PATTERN(simplify_aload_astore);
 	ADD_PATTERN(simplify_iload_istore);
 	ADD_PATTERN(factor_instruction);
+	ADD_PATTERN(factor_instruction2);
+	ADD_PATTERN(factor_instruction_risky);
+	ADD_PATTERN(factor_instruction2_risky);
     ADD_PATTERN(remove_nop);
 }
