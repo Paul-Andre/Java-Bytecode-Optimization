@@ -17,6 +17,7 @@
  * Byte code size
  * Number of jumps to a [goto] or a [dup; ifeq] sequence
  * Number of loads
+ * Number of stores
  * Number of multiplication
  * Number of labels
  * Number of jumps that don't use the lowest label when an instruction has multiple labels
@@ -24,8 +25,8 @@
  */
 
 int is_goto_or_dup_ifeq(CODE *c) {
-    int dummy;
-    return is_goto(c, &dummy) || (is_dup(c) && is_ifeq(next(c), &dummy));
+  int dummy;
+  return is_goto(c, &dummy) || (is_dup(c) && is_ifeq(next(c), &dummy));
 }
 
 int set_label(CODE *c, int l);
@@ -48,12 +49,12 @@ int simplify_multiplication_right(CODE **c)
   if (is_iload(*c,&x) && 
       is_ldc_int(next(*c),&k) && 
       is_imul(next(next(*c)))) {
-     if (k==0) return replace(c,3,makeCODEldc_int(0,NULL));
-     else if (k==1) return replace(c,3,makeCODEiload(x,NULL));
-     else if (k==2) return replace(c,3,makeCODEiload(x,
-                                       makeCODEdup(
-                                       makeCODEiadd(NULL))));
-     return 0;
+    if (k==0) return replace(c,3,makeCODEldc_int(0,NULL));
+    else if (k==1) return replace(c,3,makeCODEiload(x,NULL));
+    else if (k==2) return replace(c,3,makeCODEiload(x,
+          makeCODEdup(
+            makeCODEiadd(NULL))));
+    return 0;
   }
   return 0;
 }
@@ -77,7 +78,7 @@ int simplify_astore(CODE **c)
   if (is_dup(*c) &&
       is_astore(next(*c),&x) &&
       is_pop(next(next(*c)))) {
-     return replace(c,3,makeCODEastore(x,NULL));
+    return replace(c,3,makeCODEastore(x,NULL));
   }
   return 0;
 }
@@ -87,48 +88,35 @@ int simplify_astore(CODE **c)
  * pop              [ a * ]
  * -------->
  * [before]         [ a * ]
- * [nothing]        [ a * ]
+ * nop              [ a * ]
  *
  * Duplicated value is popped right away
  *
  * Improvement:
  *      Reduces bytecode count
  *
- * TODO:
  */
 int dup_pop(CODE **c)
 {
   if (is_dup(*c) &&
       is_pop(next(*c))) {
-     return replace(c,2,NULL);
+    return replace(c,2,makeCODEnop(NULL));
   }
   return 0;
 }
 
-/* [before]                 [ a * ]
- * ldc k   (0<=k<=127)      [ a   k ]1-2
- * iadd                     [ a+k * ]1
- * istore x                 [ *   * ]1-2     a+k is stored at x
+
+/* [before]     [ *   * ]     a is at location x
+ * iload x      [ a   * ]
+ * ldc k        [ a   k ]
+ * iadd         [ a+k * ]
+ * istore x     [ *   * ]       a+k stored at x
  * --------->
- * [before]                 [ a * ]
- * istore x                 [ * * ]1-2       a is stored at x
- * iinc x k                 [ * * ]3       a+k is stored at x
- */ 
-/* XXX: this version can possibly increase code size in terms of actual bytecode size */
-/*
-int positive_increment(CODE **c)
-{ int x,k;
-  if (is_ldc_int(*c,&k) &&
-      is_iadd(next(*c)) &&
-      is_istore(next(next(*c)),&x) &&
-      0<=k && k<=127) {
-     return replace(c,3,makeCODEistore(x,makeCODEiinc(x,k,NULL)));
-  }
-  return 0;
-}
-*/
-
-/* template version (turns out to be better)
+ * [before]     [ *   * ]
+ * iinc x -k    [ *   * ]       a+k stored at x
+ *
+ * Improvement:
+ *      Reduces bytecode count
  */
 int positive_increment(CODE **c)
 { int x,y,k;
@@ -137,33 +125,11 @@ int positive_increment(CODE **c)
       is_iadd(next(next(*c))) &&
       is_istore(next(next(next(*c))),&y) &&
       x==y && 0<=k && k<=127) {
-     return replace(c,4,makeCODEiinc(x,k,NULL));
+    return replace(c,4,makeCODEiinc(x,k,NULL));
   }
   return 0;
 }
 
-/* ldc k   (0<=k<=127)
- * isub
- * istore x
- * --------->
- * istore x
- * iinc x -k
- */ 
-/* XXX: this version can possibly increase code size */
-/*
-int negative_increment(CODE **c)
-{ int x,k;
-  if (is_ldc_int(*c,&k) &&
-      is_isub(next(*c)) &&
-      is_istore(next(next(*c)),&x) &&
-      0<=k && k<=127) {
-     return replace(c,3,makeCODEistore(x,makeCODEiinc(x,-k,NULL)));
-  }
-  return 0;
-}
-*/
-/* template version 
- */
 /* [before]     [ *   * ]     a is at location x
  * iload x      [ a   * ]
  * ldc k        [ a   k ]
@@ -172,6 +138,9 @@ int negative_increment(CODE **c)
  * --------->
  * [before]     [ *   * ]
  * iinc x -k    [ *   * ]       a-k stored at x
+ *
+ * Improvement:
+ *      Reduces bytecode count
  */
 int negative_increment(CODE **c)
 { int x,y,k;
@@ -180,10 +149,11 @@ int negative_increment(CODE **c)
       is_isub(next(next(*c))) &&
       is_istore(next(next(next(*c))),&y) &&
       x==y && 0<=k && k<=127) {
-     return replace(c,4,makeCODEiinc(x,-k,NULL));
+    return replace(c,4,makeCODEiinc(x,-k,NULL));
   }
   return 0;
 }
+
 
 
 /* goto/cmp L1
@@ -206,7 +176,6 @@ int negative_increment(CODE **c)
  * The not goto at the end is required to ensure termination in a case of
  * cyclical gotos
  *
- * TODO: might end up cycling
  *
  * Improvements: 
  *  - Keeps bytecode size the same
@@ -217,11 +186,11 @@ int simplify_goto_goto(CODE **c)
   if (uses_label(*c,&l1) &&
       is_goto(next(destination(l1)),&l2) &&
       !is_goto_or_dup_ifeq(next(destination(l2)))) {
-     droplabel(l1);
-     copylabel(l2);
-     set_label(*c,l2);
-     /*return replace(c,1,makeCODEgoto(l2,NULL));*/
-     return 1;
+    droplabel(l1);
+    copylabel(l2);
+    set_label(*c,l2);
+    /*return replace(c,1,makeCODEgoto(l2,NULL));*/
+    return 1;
   }
   return 0;
 }
@@ -297,7 +266,7 @@ int simplify_iconst_0_goto_dup_ifeq(CODE **c) {
       is_dup(next(destination(l1))) &&
       is_ifeq(next(next(destination(l1))),&l2) &&
       !is_goto_or_dup_ifeq(destination(l2))
-      ) {
+     ) {
     droplabel(l1);
     copylabel(l2);
     return replace(c,2,makeCODEldc_int(0, makeCODEgoto(l2,NULL)));
@@ -367,7 +336,7 @@ int simplify_dup_ifeq_ifeq(CODE **c) {
       ( is_ifeq(next(*c),&l1) || is_ifne(next(*c),&l1)) &&
       is_pop(next(next(*c))) &&
       (is_ifeq(next(destination(l1)),&l2) || is_ifne(next(destination(l1)),&l2))
-      ) {
+     ) {
     aeq = is_ifeq(next(*c), &d);
     beq = is_ifeq(next(destination(l1)), &d);
     if (aeq == beq) {
@@ -419,7 +388,7 @@ int simplify_dup_ifeq_ifne(CODE **c) {
       ( is_ifeq(next(*c),&l1) || is_ifne(next(*c),&l1)) &&
       is_pop(next(next(*c))) &&
       (is_ifeq(next(destination(l1)),&l2) || is_ifne(next(destination(l1)),&l2))
-      ) {
+     ) {
     aeq = is_ifeq(next(*c), &d);
     beq = is_ifeq(next(destination(l1)), &d);
     if (aeq != beq) {
@@ -624,7 +593,7 @@ int fuse_labels(CODE **c) {
   if (uses_label(*c, &l1) && is_label(next(destination(l1)), &l2)) {
     droplabel(l1);
     copylabel(l2);
-    
+
     set_label(*c, l2);
     return 1;
   }
@@ -734,7 +703,7 @@ int simplify_member_store(CODE **c) {
       is_pop(next(next(next(next(*c))))) ) {
     return 
       replace(c, 5,
-      makeCODEaload(k, makeCODEswap( makeCODEputfield(putfield_arg, NULL))));
+          makeCODEaload(k, makeCODEswap( makeCODEputfield(putfield_arg, NULL))));
   }
   return 0;
 }
@@ -1037,6 +1006,12 @@ int remove_instruction_after_return(CODE **c) {
  * if_icmpeq/if_icmpne L1       [ * ]   and go to L1
  * ---------->
  * ifeq/ifne L1                 [ * ]   and go to L1
+ *
+ * Instead of loading 0 and comparing, we can use the built-in instruction
+ *
+ * Improvement:
+ *      Reduces bytecode size
+ *
  */
 int simplify_icmp_0(CODE **c) {
   int v;
@@ -1055,6 +1030,13 @@ int simplify_icmp_0(CODE **c) {
  * if_acmpeq/if_acmpne L1       [ * ]   and go to L1
  * ---------->
  * ifnull/ifnonnull L1          [ * ]   and go to L1
+ *
+ *
+ * Instead of loading null and comparing, we can use the built-in instruction
+ *
+ * Improvement:
+ *      Reduces bytecode size
+ *
  */
 int simplify_acmp_null(CODE **c) {
   int l;
@@ -1069,10 +1051,9 @@ int simplify_acmp_null(CODE **c) {
 }
 
 
-/* Checks if some code is:
- * an expression: does not use the stack beneath it and pushes a single value
- * pure: no side effect
- * instruction: a single instruction
+/* Checks if some instruction is:
+ * an expression ( does not use the stack beneath it and pushes a single value )
+ * pure ( no side effect )
  * */
 int is_pure_expression_instruction(CODE *c) {
   int d;
@@ -1090,7 +1071,11 @@ int is_pure_expression_instruction(CODE *c) {
  *
  * We remove the swap by swapping the instructions. It is safe because the
  * instructions have no side-effects other than adding a single value onto the
- * stack
+ * stack.
+ *
+ * Improvement:
+ *      Reduces bytecode size
+ *
  */
 int basic_unswap(CODE **c) {
   CODE *c1;
@@ -1138,12 +1123,21 @@ int check_no_loads(CODE *c, int k, int *count) {
 }
 
 /* 
- * istore/astoke/iinc  k
+ * istore/astore/iinc  k            (And k is not loaded afterwards)
+ * ...
+ * ---------->
+ * pop
+ *
  *
  * If the current operation is a store, it searches through a fixed set of
  * paths to see if it is ever loaded. If all the branches terminate or have the
  * variable stored again, then we know the current load will never be used. It
  * is then safe to remove the store.
+ *
+ * Improvement:
+ *      In the istore/astore case, does not increase bytecode size and
+ *      decreases number of stores.
+ *      In the iinc case, decreases bytecode size
  */
 int remove_dead_store(CODE **c) {
   int k;
@@ -1164,6 +1158,9 @@ int remove_dead_store(CODE **c) {
  * goto L1              [ s * ] and goes to L1
  *
  * We are allowed to ignore the null check because a string literal is not null.
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 
 int simplify_ldc_string_ifnonnull(CODE **c) {
@@ -1188,6 +1185,8 @@ int simplify_ldc_string_ifnonnull(CODE **c) {
  * Even if its arguments are null, it will not return a null but throw an exception instead.
  *
  *
+ * Improvement:
+ *      Reduces bytecode size
  *
  */
 
@@ -1208,6 +1207,8 @@ int simplify_concat_string_ifnonnull(CODE **c) {
  * ---------->
  * L1: (reference count reduced by 1)
  *
+ * Improvement:
+ *      Reduces bytecode size
  */
 int remove_unnecessary_goto(CODE **c) {
   int l1, l2;
@@ -1218,12 +1219,14 @@ int remove_unnecessary_goto(CODE **c) {
 }
 
 
-/* pure_expression_instruction      [ a ]
- * pop                              [ * ]
+/* pure_expression_instruction      [ a ]  (>= 1 byte)
+ * pop                              [ * ]  ( 1 byte)
  * ---------->
- * nop                              [ * ]
+ * nop                              [ * ]  ( 1 byte)
  *
  *
+ * Improvement:
+ *      Reduces bytecode size
  */
 int basic_expression_pop(CODE **c) {
   if (is_pure_expression_instruction(*c) &&
@@ -1281,10 +1284,10 @@ int instructions_equal_and_safe_to_factor(CODE *a, CODE *b) {
     check_and_compare_int(is_if_icmple, a, b) ||
     check_and_compare_int(is_if_icmpge, a, b) ||
     check_and_compare_int(is_if_icmpne, a, b) ||
-    
+
     check_and_compare_int(is_aload, a, b) ||
     check_and_compare_int(is_astore, a, b) ||
-    
+
     check_and_compare_int(is_iload, a, b) ||
     check_and_compare_int(is_istore, a, b) ||
     check_and_compare_int(is_ldc_int, a, b) ||
@@ -1295,9 +1298,10 @@ int instructions_equal_and_safe_to_factor(CODE *a, CODE *b) {
     ;
 }
 
-/* Instructions that we beleive are probably safe to factor are those that concern methods and fields.
- * Even though the same instruction may be exectuted on different types, we
- * believe those types are safe to merge from different branches.
+/* Instructions that we beleive are probably safe to factor are those that
+ * concern methods and fields.  Even though the same instruction may be
+ * exectuted on different types, we believe those types are safe to merge from
+ * different branches and that they will downgraded to their common superclass.
  */
 int instructions_equal_and_probably_safe_to_factor(CODE *a, CODE *b) {
   if (a->kind != b->kind) return 0;
@@ -1351,7 +1355,7 @@ int factor_instruction_generic(CODE **c, int equal_and_safe(CODE *a, CODE *b)) {
   CODE *l3_code;
   int d; /*dummy*/
   if ((!is_label(*c,&d)) &&
-        is_goto(next(*c), &l1)){
+      is_goto(next(*c), &l1)){
     prev = next(*c);
     p = next(next(*c));
     while(p!=NULL) {
@@ -1371,11 +1375,13 @@ int factor_instruction_generic(CODE **c, int equal_and_safe(CODE *a, CODE *b)) {
   return 0;
 }
 
+/* see above */
 int factor_instruction(CODE **c) {
-    return factor_instruction_generic(c, instructions_equal_and_safe_to_factor);
+  return factor_instruction_generic(c, instructions_equal_and_safe_to_factor);
 }
+/* see above */
 int factor_instruction_risky(CODE **c) {
-    return factor_instruction_generic(c, instructions_equal_and_probably_safe_to_factor);
+  return factor_instruction_generic(c, instructions_equal_and_probably_safe_to_factor);
 }
 
 
@@ -1393,7 +1399,10 @@ int factor_instruction_risky(CODE **c) {
  * ...
  * goto L3
  *
- * Mostly the sanme as the factor_instruction. similarly it has two variants.
+ * Mostly the sanme as the factor_instruction. Similarly it has two variants.
+ *
+ * Improvement:
+ *      Reduces bytecode size
  */
 int factor_instruction_generic2(CODE **c, int equal_and_safe( CODE *, CODE *)) {
   CODE *p, *prev;
@@ -1401,7 +1410,7 @@ int factor_instruction_generic2(CODE **c, int equal_and_safe( CODE *, CODE *)) {
   CODE *l3_code;
   int d; /*dummy*/
   if ((!is_label(*c,&d)) &&
-        is_label(next(*c), &l1)){
+      is_label(next(*c), &l1)){
 
     prev = next(*c);
 
@@ -1410,8 +1419,6 @@ int factor_instruction_generic2(CODE **c, int equal_and_safe( CODE *, CODE *)) {
     while(p!=NULL) {
       if (equal_and_safe(*c, p) &&
           is_goto(next(p), &l2) && l1==l2 ) {
-
-          printf("ye\n");
 
         l3 = next_label();
         l3_code = makeCODElabel(l3, *c);
@@ -1430,11 +1437,13 @@ int factor_instruction_generic2(CODE **c, int equal_and_safe( CODE *, CODE *)) {
   return 0;
 }
 
+/* see above */
 int factor_instruction2(CODE **c) {
-    return factor_instruction_generic2(c, instructions_equal_and_safe_to_factor);
+  return factor_instruction_generic2(c, instructions_equal_and_safe_to_factor);
 }
+/* see above */
 int factor_instruction2_risky(CODE **c) {
-    return factor_instruction_generic2(c, instructions_equal_and_probably_safe_to_factor);
+  return factor_instruction_generic2(c, instructions_equal_and_probably_safe_to_factor);
 }
 
 /* 
@@ -1443,44 +1452,46 @@ int factor_instruction2_risky(CODE **c) {
  * --------->
  * [nothing]
  *
+ * This is sound because the nop does nothing other than taking space and if it
+ * is not at the end of a method, we can remove it.
  *
+ * Improvement:
+ *      Reduces bytecode size
  *
  */
 int remove_nop(CODE **c) {
-    if (next(*c) != NULL && is_nop(*c)) {
-        return replace(c, 1, NULL);
-    }
+  if (next(*c) != NULL && is_nop(*c)) {
+    return replace(c, 1, NULL);
+  }
 
-    return 0;
+  return 0;
 }
 
 
-
 void init_patterns(void) {
-  ADD_PATTERN(constant_fold);
   ADD_PATTERN(goto_return);
   ADD_PATTERN(invert_comparison);
-	ADD_PATTERN(simplify_dup_xxx_pop);
-	ADD_PATTERN(simplify_member_store);
-	ADD_PATTERN(simplify_astore_aload);
-	ADD_PATTERN(simplify_istore_iload);
-	ADD_PATTERN(simplify_multiplication_right);
-	ADD_PATTERN(positive_increment);
+  ADD_PATTERN(simplify_dup_xxx_pop);
+  ADD_PATTERN(simplify_member_store);
+  ADD_PATTERN(simplify_astore_aload);
+  ADD_PATTERN(simplify_istore_iload);
+  ADD_PATTERN(simplify_multiplication_right);
+  ADD_PATTERN(positive_increment);
   ADD_PATTERN(simplify_iconst_0_goto_ifeq);
-	ADD_PATTERN(simplify_goto_goto);
+  ADD_PATTERN(simplify_goto_goto);
   ADD_PATTERN(remove_iconst_ifeq);
-	ADD_PATTERN(remove_dead_label);
-	ADD_PATTERN(fuse_labels);
-	ADD_PATTERN(remove_instruction_after_goto);
-	ADD_PATTERN(remove_instruction_after_return);
-	ADD_PATTERN(simplify_icmp_0);
-	ADD_PATTERN(simplify_acmp_null);
-	ADD_PATTERN(basic_unswap);
-	ADD_PATTERN(dup_pop);
+  ADD_PATTERN(remove_dead_label);
+  ADD_PATTERN(fuse_labels);
+  ADD_PATTERN(remove_instruction_after_goto);
+  ADD_PATTERN(remove_instruction_after_return);
+  ADD_PATTERN(simplify_icmp_0);
+  ADD_PATTERN(simplify_acmp_null);
+  ADD_PATTERN(basic_unswap);
+  ADD_PATTERN(dup_pop);
   ADD_PATTERN(simplify_ldc_string_ifnonnull);
   ADD_PATTERN(remove_unnecessary_goto);
   ADD_PATTERN(simplify_concat_string_ifnonnull);
-	ADD_PATTERN(remove_dead_store);
+  ADD_PATTERN(remove_dead_store);
   ADD_PATTERN(basic_expression_pop);
   ADD_PATTERN(simplify_dup_ifeq_ifeq);
   ADD_PATTERN(simplify_dup_ifeq_ifne);
@@ -1488,11 +1499,11 @@ void init_patterns(void) {
   ADD_PATTERN(simplify_iconst_0_goto_dup_ifeq);
   ADD_PATTERN(simplify_iconst_1_dup_ifeq_pop);
   ADD_PATTERN(negative_increment);
-	ADD_PATTERN(simplify_aload_astore);
-	ADD_PATTERN(simplify_iload_istore);
-	ADD_PATTERN(factor_instruction);
-	ADD_PATTERN(factor_instruction2);
-	ADD_PATTERN(factor_instruction_risky);
-	ADD_PATTERN(factor_instruction2_risky);
-    ADD_PATTERN(remove_nop);
+  ADD_PATTERN(simplify_aload_astore);
+  ADD_PATTERN(simplify_iload_istore);
+  ADD_PATTERN(factor_instruction);
+  ADD_PATTERN(factor_instruction2);
+  ADD_PATTERN(factor_instruction_risky);
+  ADD_PATTERN(factor_instruction2_risky);
+  ADD_PATTERN(remove_nop);
 }
