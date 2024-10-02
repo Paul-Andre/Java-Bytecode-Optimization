@@ -1341,7 +1341,10 @@ int instructions_equal_and_probably_safe_to_factor(CODE *a, CODE *b) {
  * there are JVM instructions that can operate on different types. For example,
  * if in one branch we pop an object of class A and in another branch we pop an object
  * of class B, if we factor out the pop instruction, we will not pass
- * verification because stack types will not match.
+ * verification because stack types will not match. Such instructions we never include.
+ * 
+ * Some other instructions, that we were not certain were safe, we tentatively included
+ * in a "risky" variant of this optimization.
  *
  * We have two variants of this optimization: the non-risky and the risky one.
  * The only difference between them is the types of instructions they factor.
