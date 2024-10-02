@@ -1,6 +1,10 @@
-# Peephole Template
+# Java Bytecode Optimization Assignment
 
-An introduction to the basics of peephole optimization using Java Bytecode and JOOS.
+In this assignment for the McGill COMP 520 course, we wrote a set of optimization patterns for Java bytecode.
+
+The optimizations are in [`JOOSA-src/patterns.h`](JOOSA-src/patterns.h). These are "peephole" optimization patterns, meaning that the optimizer will try to apply each optimization pattern, one after the other, starting at every position in the bytecode, and will continue doing so in a loop until no more optimizations can be performed. All of the other compiler code was already provided.
+
+We put a lot of attention to the correctness of each individual optimization, and to making sure that the whole set, when taken altogether, will halt. In-depth explanations are included as comments for each optimization.
 
 ## Directory Structure
 
