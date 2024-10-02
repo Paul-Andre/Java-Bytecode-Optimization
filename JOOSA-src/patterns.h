@@ -1504,9 +1504,12 @@ void init_patterns(void) {
   ADD_PATTERN(negative_increment);
   ADD_PATTERN(simplify_aload_astore);
   ADD_PATTERN(simplify_iload_istore);
+  /* Factoring was considered a non-peephole optimization and was disabled for
+   * the final evaluation.
   ADD_PATTERN(factor_instruction);
   ADD_PATTERN(factor_instruction2);
   ADD_PATTERN(factor_instruction_risky);
   ADD_PATTERN(factor_instruction2_risky);
+  */
   ADD_PATTERN(remove_nop);
 }
