@@ -1,4 +1,4 @@
-# Java Bytecode Optimization Assignment
+# Java Bytecode Optimization
 
 In this assignment for McGill's Compilers course, we wrote a set of optimization patterns for Java bytecode.
 
